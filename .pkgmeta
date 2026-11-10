@@ -1,0 +1,17 @@
+package-as: PlateIntel
+
+ignore:
+  - tools
+  - docs
+  - .github
+  - .gitattributes
+  - .gitignore
+  - .editorconfig
+  - .luacheckrc
+  - README.md
+  - CHANGELOG.md
+  - CREDITS.md
+
+manual-changelog:
+  filename: CHANGELOG.md
+  markup-type: markdown
