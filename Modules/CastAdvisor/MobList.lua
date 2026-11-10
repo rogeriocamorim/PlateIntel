@@ -104,7 +104,10 @@ local function newCell(index)
     cell.unit, cell.index = unit, index
     cell:SetAttribute("unit", unit)
     cell:SetAttribute("*type1", "target")
-    cell:RegisterForClicks("AnyUp")
+    -- Secure buttons fire on the button DOWN event while ActionButtonUseKeyDown is on (the default): registering only
+    -- for the up event means the click never runs.
+    cell:RegisterForClicks("AnyDown", "AnyUp")
+    cell:SetAttribute("useOnKeyDown", true)
     decorate(cell)
     cell:HookScript("OnEnter", showTip)
     cell:HookScript("OnLeave", function() GameTooltip:Hide() end)
