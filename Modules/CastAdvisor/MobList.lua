@@ -81,7 +81,7 @@ end
 
 local function showTip(self)
     local class = ns.class
-    if not class or not self.lefts then return end
+    if not class or not self.lefts or self:GetAlpha() == 0 then return end
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
     GameTooltip:AddLine(BIT.L("DoTs on this mob"), 1, 0.82, 0)
     for _, key in ipairs(class.dots) do
@@ -218,6 +218,15 @@ local function updateCell(c, now)
     local class, unit = ns.class, c.unit
     local dead = plainBool(UnitIsDeadOrGhost, unit) == true
     local hostile = plainBool(UnitCanAttack, "player", unit)
+    -- Only mobs and players you can attack belong here: DoTs can't go on the rest. The game shows the cell for any
+    -- unit that exists and a protected cell can't be hidden in combat, so a friendly unit's cell is made invisible
+    -- instead (an unanswered or withheld UnitCanAttack counts as attackable).
+    if hostile == false then
+        c:SetAlpha(0)
+        c.snap, c.lefts = nil, nil
+        return
+    end
+    c:SetAlpha(1)
     pcall(function()
         c.hp:SetMinMaxValues(0, UnitHealthMax(unit))
         c.hp:SetValue(dead and 0 or UnitHealth(unit))
