@@ -21,6 +21,7 @@ make sure `PlateIntel.toc` lists every new file, and test with `/reload` in game
 New files, never touched by upstream:
 - `Core/Integrations/ElvUI.lua`: ElvUI unit frames and nameplates.
 - `Modules/DoTInfo/KillCheck.lua`: kill margin, weapon-hit check, absorb flag for the kill icon.
+- `Modules/CastPrediction/ManaCost.lua`: mana cost of the cast in progress, on the player's mana bar.
 
 Small hooks in upstream files:
 - `Core/PlateLayout.lua`: `Plate.RegisterUnitFrameSource`, `Plate.RegisterPlateBarSource`, `Plate.Read`,
@@ -30,7 +31,8 @@ Small hooks in upstream files:
   Protection only for physical DoTs in `ns.shielded`, dropping DoTs that stop ticking in `housekeep`, a cheaper
   trace log and nameplate lookup.
 - `Modules/DoTInfo/Options.lua`, `Nameplates.lua`: the options and the kill-check call.
+- `Modules/CastPrediction/Options.lua`: the `showManaCost` checkbox.
 - `Modules/SpellDamageInfo/Core.lua`: `ns.SwingAverage`.
-- `PlateIntel.toc`: metadata and the two new files.
+- `PlateIntel.toc`: metadata and the new files.
 
 Saved-variable names still start with `UsefulPlatesAndTooltips` so settings carry over from upstream installs.
