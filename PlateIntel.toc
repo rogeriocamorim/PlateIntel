@@ -86,6 +86,12 @@ Modules\DoTInfo\Focus.lua
 Modules\DoTInfo\ParseCheck.lua
 Modules\DoTInfo\TickViewer.lua
 Modules\DoTInfo\API.lua
+# CastAdvisor: next-spell window and the HealBot-style mob list (warlock first)
+Modules\CastAdvisor\Core.lua
+Modules\CastAdvisor\Warlock.lua
+Modules\CastAdvisor\Window.lua
+Modules\CastAdvisor\MobList.lua
+Modules\CastAdvisor\Options.lua
 
 Modules\StatsInfo\Weights.lua
 Modules\StatsInfo\StatsInfo.lua
