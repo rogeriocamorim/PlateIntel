@@ -30,6 +30,13 @@ end
 -- frame's template, so its bar and portrait sit at the target frame's paths.
 local FRAME_PART = { player = "Player", focus = "Focus" }
 
+-- Hooks for other addons' frames (Core/Integrations/*.lua): each source returns what it finds, or nothing.
+--   Plate.RegisterUnitFrameSource(function(unit, part) return host, bar, portrait end)
+--   Plate.RegisterPlateBarSource(function(plate) return bar, path end)
+Plate.unitFrameSources, Plate.plateBarSources = {}, {}
+function Plate.RegisterUnitFrameSource(fn) Plate.unitFrameSources[#Plate.unitFrameSources + 1] = fn end
+function Plate.RegisterPlateBarSource(fn) Plate.plateBarSources[#Plate.plateBarSources + 1] = fn end
+
 -- EUI keeps Blizzard's frames alive but hidden, so follow the profile's active source.
 local function unitFrameBase(unit)
   local part = FRAME_PART[unit] or "Target"
@@ -73,19 +80,10 @@ local function unitFrameBase(unit)
       return perl, bar, portrait
     end
   end
-  -- ElvUI hides Blizzard's unit frames and draws ElvUF_<Part> (bar .Health, portrait .Portrait3D or .Portrait2D). It
-  -- only counts while on screen: without a target it is hidden, and Blizzard's frame answers as before.
-  local elv = type(ElvUI) == "table" and _G["ElvUF_" .. part]
-  if type(elv) == "table" and read(elv.IsForbidden, elv) ~= true and read(elv.IsVisible, elv) == true then
-    local bar = read(function() return elv.Health end)
-    if type(bar) == "table" and read(bar.IsForbidden, bar) ~= true then
-      local portrait = read(function() return elv.Portrait3D end)
-      if type(portrait) ~= "table" or read(portrait.IsVisible, portrait) ~= true then
-        portrait = read(function() return elv.Portrait2D end)
-      end
-      if type(portrait) ~= "table" or read(portrait.IsVisible, portrait) ~= true then portrait = nil end
-      return elv, bar, portrait
-    end
+  -- Frame addons registered in Core/Integrations (ElvUI, ...): host, bar, portrait of the unit's own frame.
+  for _, source in ipairs(Plate.unitFrameSources) do
+    local host, bar, portrait = source(unit, part)
+    if host or bar then return host, bar, portrait end
   end
   local modules = type(EllesmereUI) == "table" and EllesmereUI._ModuleNS
   local eui = type(modules) == "table" and modules.EllesmereUIUnitFrames
@@ -130,6 +128,8 @@ end
 -- Whether a health bar's fill runs right to left, so marks measured from "no health" start at its right edge:
 -- a StatusBar with reverse fill (mirrored unit frames), or X-Perl's inverse bars, which fill with the health
 -- that is missing and leave the health that remains at the right end.
+function Plate.Read(fn, ...) return read(fn, ...) end
+
 function Plate.FillsReversed(bar)
   if type(bar) ~= "table" then return false end
   local reverse = read(bar.GetReverseFill, bar) == true
@@ -162,6 +162,8 @@ local function visibleHealthBar(bar)
   end)
   return ok and visible == true
 end
+
+function Plate.VisibleHealthBar(bar) return visibleHealthBar(bar) end
 
 local function isUnder(frame, plate)
   for _ = 1, 12 do
@@ -276,13 +278,9 @@ function Plate.HealthBar(plate)
       if bar and visibleHealthBar(bar) then return bar, "custom " .. path end
     end
   end
-  -- ElvUI draws its own plate (plate.unitFrame, with UpdateAllElements; Plater's has none) with the bar at .Health.
-  if type(ElvUI) == "table" then
-    local elv = read(function() return plate.unitFrame end)
-    if type(elv) == "table" and type(elv.UpdateAllElements) == "function" then
-      local bar = read(function() return elv.Health end)
-      if visibleHealthBar(bar) then return bar, "ElvUI.unitFrame.Health" end
-    end
+  for _, source in ipairs(Plate.plateBarSources) do
+    local bar, path = source(plate)
+    if bar then return bar, path end
   end
   if type(EllesmereNameplates_NS) == "table" then
     local children = { pcall(plate.GetChildren, plate) }

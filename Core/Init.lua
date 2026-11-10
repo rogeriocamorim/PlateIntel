@@ -58,9 +58,18 @@ function BIT.Settings(name, defaults)
   return s
 end
 
+-- PlateIntel focuses on kill prediction: these parts start switched off on a new profile and are one click away in
+-- /upt. A choice the player already made (enabled = true or false) always wins.
+local DEFAULT_OFF = {
+  StatsInfo = true, ResourceDing = true, HunterRangeFinder = true, Range = true, HealPrediction = true,
+}
+
 function BIT.IsSwitchedOn(name)
   local s = db().modules[name]
-  return not (type(s) == "table" and s.enabled == false)
+  local saved
+  if type(s) == "table" then saved = s.enabled end
+  if saved == nil then return not DEFAULT_OFF[name] end
+  return saved ~= false
 end
 
 function BIT.SetSwitchedOn(name, on)

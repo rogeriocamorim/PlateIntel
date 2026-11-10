@@ -275,16 +275,6 @@ function ns.shielded(unit, entries)
     for _, entry in ipairs(entries or {}) do
         if entry.school ~= SCHOOL_MASKS.Physical then magic = true break end
     end
-    -- One of our ticks was absorbed on this mob in the last 5 s (onUnitCombat). Looked up only while any such
-    -- mob is known: unitKey can cost a nameplate scan when GUIDs are secret.
-    local absorbedAt = ns._absorbedAt
-    if absorbedAt and next(absorbedAt) and ns.Internals then
-        local now, key = GetTime(), ns.Internals.unitKey(unit)
-        for other, at in pairs(absorbedAt) do
-            if now - at >= 5 then absorbedAt[other] = nil end
-        end
-        if key and absorbedAt[key] then return true end
-    end
     if type(UnitGetTotalAbsorbs) == "function" then
         local ok, amount = pcall(UnitGetTotalAbsorbs, unit)
         if ok and not isSecret(amount) and type(amount) == "number" and amount > 0 then return true end
@@ -1865,25 +1855,6 @@ local function dotBreakdown(key)
         return a.name < b.name
     end)
     return list
-end
-
--- The damage the kill icon is judged on: the breakdown without casts still in progress (an interrupt or a miss
--- would take them back), times the kill margin. The marker keeps showing the full estimate.
--- Field, not local: this file is at Lua's 200-local limit.
-function ns.lethalDamage(entries)
-    local sum = 0
-    for _, entry in ipairs(entries) do
-        if not entry.provisional then sum = sum + entry.damage end
-    end
-    local margin = ns.db and tonumber(ns.db.killMargin) or 100
-    margin = math.max(0, math.min(margin, 100)) / 100
-    local swing = 0
-    if ns.db and ns.db.swingKill and sum > 0 and BIT.modules then
-        local sdi = BIT.modules.SpellDamageInfo
-        local ok, value = pcall(type(sdi) == "table" and sdi.SwingAverage or error)
-        if ok and type(value) == "number" then swing = value end
-    end
-    return (sum + swing) * margin
 end
 
 -- Returns what the target's DoTs still have to deal, how many DoTs count toward it, and the per-DoT
