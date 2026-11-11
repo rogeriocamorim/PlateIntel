@@ -103,11 +103,11 @@ local function newCell(index)
     local cell = CreateFrame("Button", "PlateIntelAdvisorCell" .. index, container, "SecureUnitButtonTemplate")
     cell.unit, cell.index = unit, index
     cell:SetAttribute("unit", unit)
-    cell:SetAttribute("*type1", "target")
-    -- Secure buttons fire on the button DOWN event while ActionButtonUseKeyDown is on (the default): registering only
-    -- for the up event means the click never runs.
+    -- A macro like HealBot's cells: the plain "target" action did not take on this client. Plain type1, no wildcard.
+    cell:SetAttribute("type1", "macro")
+    cell:SetAttribute("macrotext1", "/target " .. unit)
+    -- Secure buttons fire on the button DOWN event while ActionButtonUseKeyDown is on: register both.
     cell:RegisterForClicks("AnyDown", "AnyUp")
-    cell:SetAttribute("useOnKeyDown", true)
     decorate(cell)
     cell:HookScript("OnEnter", showTip)
     cell:HookScript("OnLeave", function() GameTooltip:Hide() end)
@@ -218,6 +218,15 @@ local function updateCell(c, now)
     local class, unit = ns.class, c.unit
     local dead = plainBool(UnitIsDeadOrGhost, unit) == true
     local hostile = plainBool(UnitCanAttack, "player", unit)
+    -- This client does not target through nameplate tokens, but targets by name: keep the left-click macro on the
+    -- mob's name while it can be read (out of combat). A mob first seen in combat keeps the old name until combat ends.
+    if c.index > 0 and not InCombatLockdown() then
+        local ok, n = pcall(UnitName, unit)
+        if ok and type(n) == "string" and not ns.isSecret(n) and n ~= c.macroName then
+            c:SetAttribute("macrotext1", "/targetexact " .. n)
+            c.macroName = n
+        end
+    end
     -- Only mobs and players you can attack belong here: DoTs can't go on the rest. The game shows the cell for any
     -- unit that exists and a protected cell can't be hidden in combat, so a friendly unit's cell is made invisible
     -- instead (an unanswered or withheld UnitCanAttack counts as attackable).

@@ -1,6 +1,7 @@
 ## Interface: 16001
 ## Title: PlateIntel
-## Notes: Will your DoTs kill it? Marks the damage your DoTs still have to deal on the target, focus and nameplate health bars and shows a kill icon when it is enough. Works with Blizzard, ElvUI, EllesmereUI and X-Perl frames. Also: cast damage, heals, shields and more, each switchable. /upt
+## Notes: Know before you cast: see on every health bar whether your DoTs will kill the mob, with a skull when they will. Cast Advisor tells a warlock the next spell and lists your DoT'd mobs as a click-to-target, click-to-recast grid. Shows mana cost while casting. Works with Blizzard, ElvUI, EllesmereUI and X-Perl. /upt
+## IconTexture: Interface\AddOns\PlateIntel\Media\Icon
 ## Author: Rogerio Camorim (PlateIntel); based on UsefulPlatesAndTooltips by Ironship
 ## X-Credits: Ironship (UsefulPlatesAndTooltips), Joe Greive (Does It Die), see CREDITS.md
 ## X-Website: https://github.com/rogeriocamorim/PlateIntel
