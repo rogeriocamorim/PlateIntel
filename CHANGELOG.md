@@ -15,10 +15,6 @@ First PlateIntel release. Based on UsefulPlatesAndTooltips 0.9.120 (Forever).
 - Merged upstream 0.9.124: Amplify Curse raises the next Bane of Agony estimate, marks no longer draw over the world map, a Debug tab lists this addon's Lua errors and blocked actions, finisher numbers with hidden combo points, bank/bag marker taint fix, hunter range preset survives a reload.
 - Mana cost preview: while you cast a spell with a cast time, a segment on your own mana bar (ElvUI, EllesmereUI or
   Blizzard) shows how much mana it will take. Option "Show mana cost on your mana bar" in the CastPrediction tab.
-- Cast advisor (warlock): a window with the next spells to cast (DoTs to apply or refresh, Shadow Trance proc,
-  Shadowburn, Life Tap / wand when mana is low, Drain Life when health is low, Wrack or Shadow Bolt as filler) and a
-  gauge of how much target health your DoTs will take; and a HealBot-style mob list, one cell per mob with health,
-  name and a square per DoT. Click a cell to target it, or cast Corruption / Bane of Agony / Immolate / Siphon Life on
-  it without changing target. `/upt advisor`.
+- Cast advisor (warlock): a HealBot-style mob list, one cell per mob with health, name and a square per DoT. Click a cell to target it (by name), or cast Corruption / Bane of Agony / Immolate / Siphon Life on it without changing target. `/upt advisor`.
 - Upstream 0.9.120 changes included: Debug tab in settings, drink mana on action buttons, percentage food and drink
   amounts in item tooltips.
