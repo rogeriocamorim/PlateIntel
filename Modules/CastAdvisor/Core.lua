@@ -273,9 +273,6 @@ BIT.RegisterCommand("advisor", function(rest)
     elseif rest == "list" then
         settings.showList = not settings.showList
         applyAll()
-    elseif rest == "window" then
-        settings.showWindow = not settings.showWindow
-        applyAll()
     else
         BIT.OpenSettings("CastAdvisor")
     end

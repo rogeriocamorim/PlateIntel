@@ -27,9 +27,6 @@ local function build(parent)
     end
 
     place(UI.Header(parent, "WINDOW"), 24)
-    check("Show the recommendation window", "showWindow",
-        "Shows the next spells to cast for your DoTs, mana and health, and a gauge of how much of the target's health "
-        .. "your DoTs will still take.")
     check("Lock window and list", "locked", "Stops the window and the mob list from being dragged. /upt advisor lock|unlock")
     slider("Window and list scale", "scale", 0.6, 1.6, 0.1, nil, function(v) return string.format("%.1f", v) end)
 
