@@ -13,6 +13,7 @@ First PlateIntel release. Based on UsefulPlatesAndTooltips 0.9.120 (Forever).
 - Kill-prediction focus: StatsInfo, ResourceDing, HunterRangeFinder, Range and HealPrediction start switched off on
   a new profile (switch them on in /upt). A choice you already made is kept.
 - Merged upstream 0.9.124: Amplify Curse raises the next Bane of Agony estimate, marks no longer draw over the world map, a Debug tab lists this addon's Lua errors and blocked actions, finisher numbers with hidden combo points, bank/bag marker taint fix, hunter range preset survives a reload.
+- Merged upstream 0.9.131: the kill check, ElvUI support and mana cost preview are upstream now (pull requests 59 to 62); also new from upstream: HydraUI frames, weapon icon, damage meter numbers, TriggerGlow action bar glow, per second numbers on action buttons, more client languages.
 - Mana cost preview: while you cast a spell with a cast time, a segment on your own mana bar (ElvUI, EllesmereUI or
   Blizzard) shows how much mana it will take. Option "Show mana cost on your mana bar" in the CastPrediction tab.
 - Cast advisor (warlock): a HealBot-style mob list, one cell per mob with health, name and a square per DoT. Click a cell to target it (by name), or cast Corruption / Bane of Agony / Immolate / Siphon Life on it without changing target. `/upt advisor`.

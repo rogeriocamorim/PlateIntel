@@ -8,11 +8,13 @@
 ## X-License: GPL-3.0-or-later
 ## X-Category: Combat
 ## Version: 1.0.0
-## OptionalDeps: ElvUI, EllesmereUI, EllesmereUIActionBars, EllesmereUINameplates, EllesmereUIUnitFrames, EllesmereUIRaidFrames, EllesmereUIBags
+## OptionalDeps: ElvUI, HydraUI, EllesmereUI, EllesmereUIActionBars, EllesmereUINameplates, EllesmereUIUnitFrames, EllesmereUIRaidFrames, EllesmereUIBags
 ## SavedVariables: UsefulPlatesAndTooltipsDB, UsefulPlatesAndTooltips_SpellDamageInfoDB, UsefulPlatesAndTooltips_DoTInfoDB, UsefulPlatesAndTooltips_ResourceDingDB
 
 Core\Init.lua
 Core\Trace.lua
+Core\Perf.lua
+Core\Meter.lua
 Core\Locale.lua
 Locales\deDE\Core.lua
 Locales\deDE\CastPrediction.lua
@@ -36,6 +38,7 @@ Core\TalentModsData.lua
 Core\TalentMods.lua
 Core\PlateLayout.lua
 Core\Integrations\ElvUI.lua
+Core\Integrations\HydraUI.lua
 Core\Orbs.lua
 Core\Appearance.lua
 Core\Gamepad.lua
@@ -56,7 +59,13 @@ Modules\SpellDamageInfo\Parser.lua
 Modules\SpellDamageInfo\Parser_enUS.lua
 Modules\SpellDamageInfo\Parser_deDE.lua
 Modules\SpellDamageInfo\Parser_ruRU.lua
+Modules\SpellDamageInfo\Parser_frFR.lua
+Modules\SpellDamageInfo\Parser_esES.lua
+Modules\SpellDamageInfo\Parser_ptBR.lua
+Modules\SpellDamageInfo\Parser_zhCN.lua
+Modules\SpellDamageInfo\Parser_koKR.lua
 Modules\SpellDamageInfo\Estimate.lua
+Modules\SpellDamageInfo\History.lua
 Modules\SpellDamageInfo\Core.lua
 Modules\SpellDamageInfo\Options.lua
 
@@ -79,6 +88,8 @@ Modules\DoTInfo\Locale_ptBR.lua
 Modules\DoTInfo\Locale_zhCN.lua
 Modules\DoTInfo\Core.lua
 Modules\DoTInfo\KillCheck.lua
+Modules\DoTInfo\SwingIcon.lua
+Modules\DoTInfo\MeterLearning.lua
 Modules\DoTInfo\ProcDots.lua
 Modules\DoTInfo\DeathMark.lua
 Modules\DoTInfo\RogueEffects.lua
@@ -119,6 +130,12 @@ Modules\HealPrediction\Options.lua
 
 # Hunter-specific range ladder, beside the existing class range marker
 Modules\HunterRangeFinder\HunterRangeFinder.lua
+
+# TriggerGlow (experimental): a glow on the action bar button of a spell whose moment has come
+Modules\TriggerGlow\Data.lua
+Modules\TriggerGlow\Spells.lua
+Modules\TriggerGlow\Core.lua
+Modules\TriggerGlow\Options.lua
 
 # The diagnostic commands as buttons; last, so its tab is the last one
 Core\Debug.lua

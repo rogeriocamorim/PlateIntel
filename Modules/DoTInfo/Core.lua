@@ -39,7 +39,7 @@ local TICK_AMOUNT_TOLERANCE = 0.25
 local FIRST_TICK_AMOUNT_TOLERANCE = 0.3
 -- A crit tick is 1.5-2x a normal one; anything else flagged as a crit (white-hit crits) isn't this DoT.
 local CRIT_MIN_RATIO, CRIT_MAX_RATIO = 1.3, 2.3
-local DB_VERSION = 5                -- bump to discard learned data from older, buggier versions
+local DB_VERSION = 6                -- bump to discard learned data from older, buggier versions (6: learned sizes per character)
 
 -- Tick intervals that differ from the 3s default and aren't stated in the description.
 local KNOWN_TICK_INTERVALS = {
@@ -114,9 +114,11 @@ ns.TRAP_DOTS = { ["Immolation Trap"] = true }
 ns.DELAYED_DOTS = { ["Wyvern Sting"] = true }
 -- Any new Fire trap replaces the armed one (by name, so it works in every language).
 ns.FIRE_TRAPS = { ["Immolation Trap"] = true, ["Explosive Trap"] = true }
+-- This projectile has no direct damage confirming that the cast actually landed.
+ns.CONFIRM_PROJECTILE_DOTS = { ["Serpent Sting"] = true }
 
 local NAME_TABLES = { KNOWN_TICK_INTERVALS, TICK_SHAPES, SCHOOL_BY_NAME, IGNORED_SPELLS, PROJECTILE_DOTS, ns.refreshNames,
-    ns.TRAP_DOTS, ns.FIRE_TRAPS, ns.DELAYED_DOTS, ns.AMPLIFY_USES }
+    ns.TRAP_DOTS, ns.FIRE_TRAPS, ns.DELAYED_DOTS, ns.AMPLIFY_USES, ns.CONFIRM_PROJECTILE_DOTS }
 ns.locale.addNames(NAME_TABLES)
 
 local SCHOOL_MASKS = {
@@ -173,7 +175,7 @@ local DEFAULTS = {
     -- Accuracy
     waitFirstTick = "off",
     estimateDuringCast = true,
-    swingKill = false, -- the kill icon also counts one average weapon hit (melee swing, wand or ranged shot)
+    swingKill = true, -- a weapon icon shows when the DoTs plus one average weapon hit (melee swing, wand or ranged shot) kill
     killMargin = 90, -- % of the estimate the kill icon trusts: heals, regen and estimate error eat the rest
     targetOverMouseover = false, -- a same-named mob under the mouse doesn't blank a target cast (_namedEnemyKey)
     -- Nameplates (Nameplates.lua): their own look, since enemy plates are red. Defaults read well on red.
@@ -184,7 +186,7 @@ local DEFAULTS = {
     plateIconOffsetX = 0,
     plateIconOffsetY = 0,
     plateIcon = "skull",
-    plateDotColors = "single",
+    plateDotColors = "rainbow",
     plateFillDirection = "auto",
     plateFillTexture = "flat",
     plateFillColor = "white",
@@ -287,10 +289,10 @@ end
 -- Only a positively detected absorb or known protection aura hides the kill icon. Secret/unreadable
 -- state (common on Forever in combat) counts as unshielded: hiding on "unknown" hid it on plain mobs.
 function ns.shielded(unit, entries)
-    -- Blessing of Protection stops physical damage only: it doesn't shield a mob from magic DoTs.
-    local magic = false
+    -- Mixed damage and weapon hits cannot safely count their physical portion through BoP.
+    local physical = not entries or #entries == 0 or (ns.db and ns.db.swingKill)
     for _, entry in ipairs(entries or {}) do
-        if entry.school ~= SCHOOL_MASKS.Physical then magic = true break end
+        if isSecret(entry.school) or type(entry.school) ~= "number" or entry.school % 2 == 1 then physical = true break end
     end
     if type(UnitGetTotalAbsorbs) == "function" then
         local ok, amount = pcall(UnitGetTotalAbsorbs, unit)
@@ -314,9 +316,9 @@ function ns.shielded(unit, entries)
         end
         -- Unreadable entries are skipped so a readable shield further down still counts.
         if ok and not isSecret(id) and type(id) == "number" and protectionSpells[id]
-            and not (magic and id == 1022) then return true end
+            and not (not physical and id == 1022) then return true end
         if ok and not isSecret(name) and type(name) == "string" and protectionNames[name]
-            and not (magic and name == bopName) then return true end
+            and not (not physical and name == bopName) then return true end
     end
     return false
 end
@@ -516,6 +518,11 @@ end
 -- A waiting DoT doesn't count toward the marker until its first tick lands (see WAIT_MODES).
 local function isWaiting(dot)
     if dot.predictionOnly then return false end
+    if dot.confirmationPending then
+        -- A tick from the old application cannot prove that a refresh landed.
+        return not (dot.ticksSeen > 0 and dot.lastTickAt
+            and (not dot.replaced or dot.lastTickAt > dot.replaced.expiresAt + TICK_MATCH_WINDOW))
+    end
     if dot.ticksSeen > 0 then return false end
     -- An avoid right after the cast that may not have been its own: always wait for the first tick.
     if dot.doubtful or db.waitFirstTick == "always" then return true end
@@ -618,28 +625,12 @@ local function describeReading(ok, value)
     return tostring(value)
 end
 
--- L11-1: what the game's own combo point display is showing, for the client
--- that keeps the number itself secret. Same source ResourceDing reads
--- (ComboFrame + ComboPointN.Highlight alpha), so both modules agree in
--- combat instead of RD seeing 5/5 while DoTInfo logs "unknown".
+-- The client may expose either modern ComboPoints or classic ComboPointN highlights.
 local function displayedComboPoints()
-    local frame = _G and _G.ComboFrame
-    if type(frame) ~= "table" or type(frame.IsShown) ~= "function" then return nil end
-    local ok, shown = pcall(frame.IsShown, frame)
-    if not ok or isSecret(shown) then return nil end
-    if not shown then return 0 end
-    local count = 0
-    for index = 1, 12 do
-        local point = _G["ComboPoint" .. index]
-        local highlight = type(point) == "table" and point.Highlight
-        if type(highlight) ~= "table" or type(highlight.GetAlpha) ~= "function" then break end
-        local okV, visible = pcall(point.IsShown, point)
-        local okA, alpha = pcall(highlight.GetAlpha, highlight)
-        if not okV or not okA or isSecret(visible) or isSecret(alpha) then return nil end
-        if type(alpha) ~= "number" then return nil end
-        if visible and alpha > 0.5 then count = count + 1 end
+    local resource = BIT.modules and BIT.modules.ResourceDing
+    if type(resource) == "table" and type(resource.DisplayedComboPoints) == "function" then
+        return resource.DisplayedComboPoints()
     end
-    return count
 end
 
 -- Returns the best plain reading (or nil) and a description of what each API returned, for the log.
@@ -1141,14 +1132,21 @@ local function onPlayerCast(spellID, castGUID)
         -- DOT-5b: SUCCEEDED with no readable target silently vanished (0 log
         -- lines, breaking "always recorded"). Log it and stay silent in chat.
         trace(string.format("CAST %s (id %d): no target, not tracked", name, spellID))
+        if ns.Learn then ns.Learn.Untracked(spellID) end -- the damage meter still counts what this cast deals
         return
     end
 
     local now = GetTime()
     dotsByTarget[key] = dotsByTarget[key] or {}
     local previous = dotsByTarget[key][name]
+    if not ns.Retail and previous and previous.confirmationPending and isWaiting(previous) then
+        previous = previous.replaced
+    end
+    if not ns.Retail and ns.CONFIRM_PROJECTILE_DOTS[name]
+        and previous and now > previous.expiresAt + TICK_MATCH_WINDOW then previous = nil end
     local dot = newDot(spellID, tickKey, name, total, school, duration, statedInterval, now)
     dot.boost = amplified
+    dot.confirmationPending = not ns.Retail and ns.CONFIRM_PROJECTILE_DOTS[name] or nil
     if ns.Retail then ns.Retail.ApplyRefresh(dot, previous, now) end
     -- A recast may keep the old DoT's tick timer: remember its rhythm and tick size (ns.discoverRhythm), unbuffed:
     -- the old DoT may have had Amplify Curse's buff and this one may not, or the other way round.
@@ -1166,6 +1164,8 @@ local function onPlayerCast(spellID, castGUID)
     dotsByTarget[key][name] = dot
     lastDotCast = { key = key, name = name, dot = dot, previous = previous, at = now,
         comboRead = not ns.Retail and isFinisher and comboSource == "read" and comboPoints or nil }
+    -- The damage meter teaches this DoT's real tick size after the fight (MeterLearning.lua).
+    if ns.Learn and not ns.Retail then ns.Learn.Cast(dot, ns.Learn.Upfront(spellID, isFinisher), name) end
     local learned = not ns.Retail and tickKey and db.ticks[tickKey]
     -- The starting estimate is shaky without a learned tick size (description numbers leave out spell power
     -- and attack power) or, for finishers, without knowing the combo points.
@@ -1319,6 +1319,7 @@ local function saveLearnedTick(dot)
     if dot.boost and dot.boost ~= 1 then return end
     if dot.tickKey and dot.normalTicks > 0 then
         db.ticks[dot.tickKey] = math.floor(dot.tickSum / dot.normalTicks * 10 + 0.5) / 10
+        if ns.Learn then ns.Learn.Readable(dot.tickKey) end -- the meter's total then holds ticks the tally didn't count
     end
 end
 
@@ -1504,7 +1505,7 @@ local combatFrameHits = {}
 -- Forever hides amounts, not schools (DoesItDie #26): match timing without learning damage.
 -- ponytail: foreign hits can consume a hidden tick slot, but physical hits must not move the cast's rhythm.
 -- Field, not local: this file is at Lua's 200-local limit.
-function ns.onHiddenAmountHit(key, unit, school)
+function ns.onHiddenAmountHit(key, unit, school, absorbed)
     local dots = dotsByTarget[key]
     local tracked = dots ~= nil
     -- An armed trap needs the hit even where no DoT runs (ProcDots.lua).
@@ -1541,6 +1542,10 @@ function ns.onHiddenAmountHit(key, unit, school)
         if tracked then trace(string.format("HIT (amount hidden) school %d on %s not matched to a DoT", school, unit)) end
         return
     end
+    if absorbed then
+        ns._absorbedAt = ns._absorbedAt or {}
+        ns._absorbedAt[key] = now
+    end
     if school == SCHOOL_MASKS.Physical and best.firstTickAt then return end
     local wasWaiting = isWaiting(best)
     best.ticksSeen = best.ticksSeen + 1
@@ -1557,10 +1562,12 @@ function ns.onHiddenAmountHit(key, unit, school)
         tickIndex = anchorTick(best, bestIndex, now)
     end
     hit.fed[bestName] = true
+    if ns.Learn then ns.Learn.HiddenTick(best, tickShape(best, tickIndex)) end
+    local nowShown = wasWaiting and not isWaiting(best)
     trace(string.format("TICK %s (amount hidden) on %s (tick %d/%d, expecting %.1f for this tick)%s", bestName,
         unit, tickIndex, best.totalTicks, expectedTick(best) * tickShape(best, tickIndex),
-        wasWaiting and ", now shown" or ""))
-    if wasWaiting then return key end
+        nowShown and ", now shown" or ""))
+    if nowShown then return key end
 end
 
 local function onUnitCombat(unit, action, flag, amount, school)
@@ -1576,7 +1583,7 @@ local function onUnitCombat(unit, action, flag, amount, school)
     if action == "WOUND" or absorbed then onTargetHit(key, school) end
     if action ~= "WOUND" and not absorbed then return end
     if isSecret(amount) and not isSecret(school) and type(school) == "number" then
-        return ns.onHiddenAmountHit(key, unit, school)
+        return ns.onHiddenAmountHit(key, unit, school, absorbed)
     end
     if isSecret(amount) or isSecret(school) or type(amount) ~= "number" then return end
     local isCrit = not isSecret(flag) and flag == "CRITICAL"
@@ -1645,11 +1652,11 @@ local function onUnitCombat(unit, action, flag, amount, school)
                 local wasWaiting = isWaiting(dot)
                 if trySwapSameSlot(dot, name, amount, isCrit, now) then return end
                 if tryRelearn(dot, name, amount, isCrit, index, distance, now) then
-                    return wasWaiting and key or nil
+                    return wasWaiting and not isWaiting(dot) and key or nil
                 end
                 if ns.discoverRhythm(dot, name, amount, isCrit, now) then
                     lastCombatFed[name] = true
-                    return wasWaiting and key or nil
+                    return wasWaiting and not isWaiting(dot) and key or nil
                 end
             end
         end
@@ -1680,10 +1687,11 @@ local function onUnitCombat(unit, action, flag, amount, school)
     local tickIndex = anchorTick(best, bestIndex, now)
     lastCombatFed[bestName] = true
     if ns.DeathMark then ns.DeathMark.OnTick(key, bestName, amount, now) end
+    local nowShown = wasWaiting and not isWaiting(best)
     trace(string.format("TICK %s %d%s on %s (tick %d/%d, expecting %.1f for this tick)%s", bestName, amount,
         isCrit and " CRIT" or "", unit, tickIndex, best.totalTicks, expectedTick(best) * factor,
-        wasWaiting and ", now shown" or ""))
-    if wasWaiting then return key end
+        nowShown and ", now shown" or ""))
+    if nowShown then return key end
 end
 
 -- Debuff check (Forever). UNIT_SPELLCAST_SUCCEEDED also fires for a cast that was resisted or missed, and the
@@ -1764,24 +1772,35 @@ function ns._verifyAuras(now)
                 local found, startedAt
                 if unit then found, startedAt = ns._ownDebuff(unit, dot.spellID, name) end
                 if found == nil then
-                    if now - dot.verifyAt > check.giveUp then dot.verifyAt, dot.replaced = nil, nil end
+                    if now - dot.verifyAt > check.giveUp then
+                        dot.verifyAt = nil
+                        if not dot.confirmationPending then dot.replaced = nil end
+                    end
                 else
                     local replaced = dot.replaced
-                    dot.verifyAt, dot.replaced = nil, nil
                     if found then
                         db.auras[name] = true
                         if replaced and startedAt and startedAt < dot.appliedAt - check.startSlack then
                             dots[name] = replaced
                             trace(string.format("AURA %s on %s is still the earlier one (%.1fs old): the recast did not land; keeping the earlier one",
                                 name, unit, now - startedAt))
-                        elseif dot.doubtful then
-                            dot.doubtful = nil
-                            trace(string.format("AURA %s is on %s: it landed", name, unit))
+                        elseif dot.confirmationPending and replaced and not startedAt
+                            and now <= replaced.expiresAt + TICK_MATCH_WINDOW then
+                            -- An undated aura may still be the old application.
+                            if now - dot.verifyAt > check.giveUp then dot.verifyAt = nil end
+                        else
+                            dot.verifyAt, dot.replaced = nil, nil
+                            if dot.doubtful or dot.confirmationPending then
+                                dot.doubtful, dot.confirmationPending = nil, nil
+                                trace(string.format("AURA %s is on %s: it landed", name, unit))
+                            end
                         end
                     elseif db.auras[name] then
                         dots[name] = nil
                         trace(string.format("AURA %s is not on %s: resisted or missed; dropped", name, unit))
                     else
+                        dot.verifyAt = nil
+                        if not dot.confirmationPending then dot.replaced = nil end
                         trace(string.format("AURA %s is not on %s, but its debuff was never read under that name: not judged",
                             name, unit))
                     end
@@ -1832,12 +1851,24 @@ local function housekeep(now)
         pendingCast, comboAtSend = nil, nil
     end
     for key, dots in pairs(dotsByTarget) do
+        local onToken -- whether a unit token shows the mob now: ticks only arrive (UNIT_COMBAT) for a mob on one
         for name, dot in pairs(dots) do
+            local replaced = dot.confirmationPending and isWaiting(dot) and dot.replaced
+            if replaced then
+                while replaced.nextTickAt < now - TICK_MATCH_WINDOW and replaced.nextTickAt <= replaced.expiresAt do
+                    replaced.nextTickAt = replaced.nextTickAt + replaced.interval
+                end
+            end
             local late = (dot.ticksSeen == 0 and dot.travel) or 0
             while not dot.predictionOnly and dot.nextTickAt < now - TICK_MATCH_WINDOW - late
                 and dot.nextTickAt <= dot.expiresAt do
                 dot.nextTickAt = dot.nextTickAt + dot.interval
+                if dot.missed == 0 then dot.missedUnseen = 0 end
                 dot.missed = dot.missed + 1
+                -- A tick due while the mob was on no token (another target, no nameplate) could not be seen:
+                -- it says nothing about the DoT having stopped.
+                if onToken == nil then onToken = ns._unitForKey(key) ~= nil end
+                if not onToken then dot.missedUnseen = (dot.missedUnseen or 0) + 1 end
             end
             if not dot.predictionOnly and not dot.auraObserved and dot.ticksSeen == 0 and dot.missed >= math.max(MISSED_TICKS_BEFORE_DROP, dot.totalTicks) then
                 dots[name] = nil
@@ -1845,8 +1876,10 @@ local function housekeep(now)
             -- Ticked, then went quiet on its known rhythm: dispelled or pushed off by the debuff cap. Its leftover
             -- ticks would keep the kill icon lit. Physical is left out: hidden-amount bleed ticks don't reset
             -- `missed` once anchored (onHiddenAmountHit). Proc DoTs keep their own books (ProcDots.lua).
+            -- Only ticks missed while the mob was on a unit token count (missedUnseen: the rest).
             elseif not dot.predictionOnly and not dot.auraObserved and not dot.procDot and dot.firstTickAt
-                and dot.school ~= SCHOOL_MASKS.Physical and dot.missed >= MISSED_TICKS_BEFORE_DROP + 1 then
+                and dot.school ~= SCHOOL_MASKS.Physical
+                and dot.missed - (dot.missedUnseen or 0) >= MISSED_TICKS_BEFORE_DROP + 1 then
                 dots[name] = nil
                 trace("DROP " .. name .. " stopped ticking (dispelled?)")
             elseif now > dot.expiresAt + TICK_MATCH_WINDOW then
@@ -1908,9 +1941,16 @@ local function dotBreakdown(key)
         if type(plate) ~= "table" or type(plate.RefreshDue) ~= "function" then return false end
         return plate.RefreshDue(remaining, duration, dot.interval) and true or false
     end
+    local dots = key and dotsByTarget[key]
+    local cast = key and castInProgress and castInProgress.key == key and castInProgress or nil
+    local castVisible = cast and not isWaiting(cast.dot)
     local list = {}
     for name, dot in pairs(dots or {}) do
-        if not isWaiting(dot) and not (cast and name == cast.name) then
+        if dot.confirmationPending and isWaiting(dot) then
+            dot = dot.replaced
+            if dot and GetTime() >= dot.expiresAt then dot = nil end
+        end
+        if dot and not isWaiting(dot) and not (castVisible and name == cast.name) then
             if not dot.segmentOrder then
                 dot.segmentOrder = { rank = dot.estimatedClock and 2
                     or ((dot.predictionOnly or (dot.unsure and dot.normalTicks == 0)) and 1 or 0),
@@ -1921,9 +1961,13 @@ local function dotBreakdown(key)
                 refreshDue = refreshDueFor(name, dot) })
         end
     end
-    if cast and not isWaiting(cast.dot) then
+    if castVisible then
+        -- `running`: what the DoT this cast would refresh still has to deal. The cast's entry stands in for it
+        -- above, so the kill check (KillCheck.lua), which leaves the cast out, counts this instead.
+        local refreshed = dots and dots[cast.name]
         table.insert(list, { name = cast.name, spellID = cast.spellID, school = cast.dot.school, appliedAt = cast.dot.appliedAt,
             expiresAt = cast.dot.expiresAt,
+            running = refreshed and not isWaiting(refreshed) and remainingDamage(refreshed) or nil,
             segmentOrder = { rank = 3, appliedAt = cast.dot.appliedAt },
             damage = remainingDamage(cast.dot), familyID = cast.dot.familyID, provisional = true, refreshDue = refreshDueFor(cast.name, cast.dot) })
     end
@@ -2113,6 +2157,10 @@ local remainingBar = CreateFrame("StatusBar", "PlateIntel_DoTInfoRemaining", UIP
 remainingBar:SetStatusBarTexture(WHITE)
 remainingBar:SetStatusBarColor(0, 0, 0, 0)
 remainingBar:Hide()
+-- The modules that keep their marks above a unit frame (this one, CastPrediction) look at what is on that frame; a mark of
+-- ours that sits on the bar must not count as the frame's own, or the two would raise each other without end.
+BIT.OwnOverlays = BIT.OwnOverlays or setmetatable({}, { __mode = "k" })
+BIT.OwnOverlays[remainingBar] = true
 local span = remainingBar:GetStatusBarTexture()
 
 local function coverSpan(texture)
@@ -2324,6 +2372,7 @@ local label = remainingBar:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall
 -- can run on every refresh and option changes still show up immediately.
 local APPEARANCE_KEYS = {
     "showMarkers", "targetMarkers", "skullIcon", "skullSize", "skullPosition", "skullPulse", "skullOffsetX", "skullOffsetY",
+    "swingKill",
     "showSpark", "showGlow", "glowSize", "showShine", "shineInterval", "scrollStripes",
     "fillTexture", "fillColor", "fillOpacity", "dotColors",
     "outlineStyle", "dashLength", "outlineThickness", "outlineColor", "outlineOpacity", "pulseOutline",
@@ -2415,6 +2464,7 @@ local function applyAppearance()
     local icon = findById(SKULL_ICONS, db.skullIcon).path
     skull:SetTexture(icon)
     plainSkull:SetTexture(icon)
+    if ns.swing then ns.SwingIcon.Style(ns.swing, size, db.swingKill) end
     if db.skullPulse then skullPulse:Play() else skullPulse:Stop() end
     positionSkull()
 
@@ -2694,10 +2744,9 @@ local function attach()
     plainSkullFrame:SetPoint("BOTTOM", skullWindow, "TOP", 0, 4)
 
     healthBar = bar
-    if healthBar then
-        remainingBar:ClearAllPoints()
-        remainingBar:SetAllPoints(healthBar)
-    end
+    ns._anchoredBar = nil -- a new bar: anchor the marker again whatever it was
+    if ns.anchorMarker then ns.anchorMarker() end
+    if ns.applyMarkerParent then ns.applyMarkerParent() end
     appliedSignature = nil -- re-anchor the skull, label and effects against the (new) frames
     trace("ATTACH portrait: " .. regionName(portrait) .. " | health bar: " .. regionName(healthBar))
     return portrait ~= nil
@@ -2720,6 +2769,7 @@ local function targetFrameTopLayer()
     if not root or root == UIParent then return end
     local topStrata, topLevel = "BACKGROUND", 0
     local function visit(frame, depth)
+        if BIT.OwnOverlays[frame] then return end
         if depth > 0 then
             -- hidden only when the client says so: an unreadable or secret answer counts as shown
             local okShown, shown = pcall(frame.IsShown, frame)
@@ -2752,16 +2802,58 @@ end
 -- Keeps our marker and skull above everything on the target frame. Checked while displaying (throttled)
 -- because Blizzard can re-layer the frame at any time.
 local layerCheckedAt, lastStrata, lastLevel, layerErrorLogged = 0, nil, nil, false
+
+-- Where the damage marker hangs: on the health bar itself, as CastPrediction's cast marker does, or, with db.markerParent
+-- "screen" (/dotinfo marker screen), on UIParent, anchored to the bar. On the Forever client a marker on UIParent was
+-- never drawn on the target frame although it was shown, sized and levelled right (seen in game 2026-11-14, shown at once
+-- when hung on the bar), and the nameplate marks, which hang on their plate, draw. Reparenting is not possible in combat,
+-- so it waits for the end of it; the options preview always uses the screen (its mock bar is not the target's). A field
+-- on ns: the file's local limit.
+function ns.applyMarkerParent()
+    if type(InCombatLockdown) == "function" and InCombatLockdown() then return end
+    local want = (not previewHost and db.markerParent ~= "screen" and healthBar) or UIParent
+    -- remembered rather than asked of the client: the marker was created on UIParent and nothing else moves it
+    if ns._markerParented == nil then ns._markerParented = UIParent end
+    if ns._markerParented ~= want and pcall(remainingBar.SetParent, remainingBar, want) then
+        ns._markerParented = want
+        layerCheckedAt = 0 -- the new parent may bring its own level: place the marker again at once
+        trace("PARENT the marker now hangs on " .. (want == UIParent and "the screen" or "the health bar"))
+    end
+end
+
+-- Anchors the marker over the health bar the player sees: the HealthBar frame itself, or, where that is taller (Blizzard's
+-- Camelot frames: 3 above and 2 below its container), the container's top and bottom, so the outline and glow do not
+-- stick out. Looked at again every second (the frame may not have been laid out when it was first attached), and only
+-- touched when the answer changed.
+function ns.anchorMarker()
+    if not healthBar then return end
+    local top, bottom = 0, 0
+    if not previewHost and BIT.Plate and BIT.Plate.BarInset then top, bottom = BIT.Plate.BarInset(healthBar) end
+    if ns._anchoredBar == healthBar and ns._anchoredTop == top and ns._anchoredBottom == bottom then return end
+    ns._anchoredBar, ns._anchoredTop, ns._anchoredBottom = healthBar, top, bottom
+    remainingBar:ClearAllPoints()
+    if top == 0 and bottom == 0 then
+        remainingBar:SetAllPoints(healthBar)
+    else
+        remainingBar:SetPoint("TOPLEFT", healthBar, "TOPLEFT", 0, -top)
+        remainingBar:SetPoint("BOTTOMRIGHT", healthBar, "BOTTOMRIGHT", 0, bottom)
+    end
+end
+
 local function updateLayering(now)
     if now - layerCheckedAt < LAYER_CHECK_INTERVAL then return end
     layerCheckedAt = now
+    ns.applyMarkerParent()
+    ns.anchorMarker()
     local ok, strata, level
     if previewHost then
         -- One strata above the options window: it's a top-level frame, which WoW raises above everything else
         -- in its own strata (our frames included) when it's shown or clicked. Dropdowns and tooltips sit higher.
         ok, strata, level = true, "FULLSCREEN", 1
     else
+        local t0 = BIT.Perf and BIT.Perf.Begin()
         ok, strata, level = pcall(targetFrameTopLayer)
+        if BIT.Perf then BIT.Perf.End("DoTInfo layer scan", t0) end
     end
     if not ok then
         if not layerErrorLogged then
@@ -2775,9 +2867,11 @@ local function updateLayering(now)
         layerCheckedAt = now - LAYER_CHECK_INTERVAL * 0.75
         return
     end
+    -- CastPrediction's frames sit on the same bar and are left out of the scan (BIT.OwnOverlays), at up to 7 above the top
+    -- it found: ours go above them, as they did when each saw the other's frames.
     for i, frame in ipairs({ remainingBar, fillLayer, clipLayer, outlineLayer, sparkLayer, skullWindow, skullBar }) do
         frame:SetFrameStrata(strata)
-        frame:SetFrameLevel(level + i)
+        frame:SetFrameLevel(level + 8 + i)
     end
     if strata ~= lastStrata or level ~= lastLevel then
         lastStrata, lastLevel = strata, level
@@ -2833,6 +2927,52 @@ local function traceSkullGeometry()
     trace("SKULLTEST plain " .. describeFrame(plainSkullFrame) .. " texture=" .. tostring(plainSkull:GetTexture()))
 end
 
+-- /dotinfo marker: where the damage marker really is, set beside the health bar it follows and the cast marker (which
+-- is known to draw there). Printed and logged. A field on ns: this file is at Lua's limit of 200 locals.
+function ns.traceMarker()
+    local function say(text)
+        trace("MARKER " .. text)
+        if not db.debug then print("DoTInfo marker: " .. text) end -- with /dotinfo debug on, the trace is already echoed
+    end
+    local function call(object, method, ...)
+        if type(object) ~= "table" or type(object[method]) ~= "function" then return "n/a" end
+        local packed = { pcall(object[method], object, ...) }
+        if not packed[1] then return "error" end
+        local out = {}
+        for i = 2, math.max(2, #packed) do
+            local v = packed[i]
+            out[#out + 1] = isSecret(v) and "secret" or (type(v) == "number" and string.format("%.2f", v) or tostring(v))
+        end
+        return table.concat(out, " ")
+    end
+    local function frameLine(frame)
+        return describeFrame(frame) .. " | alpha " .. call(frame, "GetEffectiveAlpha") .. " scale " .. call(frame, "GetEffectiveScale")
+    end
+    local reversed = BIT.Plate and BIT.Plate.FillsReversed and healthBar and BIT.Plate.FillsReversed(healthBar)
+    say("settings: markers " .. tostring(db.showMarkers) .. ", target " .. tostring(db.targetMarkers) .. ", colors "
+        .. tostring(db.dotColors) .. ", direction " .. tostring(db.fillDirection) .. ", follows reverse fill "
+        .. tostring(reversed) .. ", target " .. tostring(UnitExists("target")))
+    say("health bar: " .. (healthBar and (regionName(healthBar) .. " " .. frameLine(healthBar)) or "none"))
+    say("marker: " .. frameLine(remainingBar) .. " | parent " .. call(remainingBar:GetParent(), "GetDebugName")
+        .. " | range " .. call(remainingBar, "GetMinMaxValues") .. " value " .. call(remainingBar, "GetValue")
+        .. " | fill " .. rectOf(span))
+    say("marker layers: fill " .. describeFrame(fillLayer) .. " | clip " .. describeFrame(clipLayer)
+        .. " | outline " .. describeFrame(outlineLayer))
+    local shownSegments = 0
+    for i, segment in ipairs(segments) do
+        if segment.texture:IsShown() then
+            shownSegments = shownSegments + 1
+            say(string.format("segment %d: %s visible=%s color %s texture %s", i, rectOf(segment.texture),
+                tostring(segment.texture:IsVisible()), call(segment.texture, "GetVertexColor"),
+                tostring(segment.texture:GetTexture())))
+        end
+    end
+    say(string.format("ours: damage %s, shown %s, segments shown %d, marker shown %s", tostring(markerValue),
+        tostring(markerShownValue), shownSegments, tostring(remainingBar:IsShown())))
+    local cast = _G.PlateIntel_CastPredictionMarker
+    say("cast marker: " .. (cast and (frameLine(cast) .. " | parent " .. call(cast:GetParent(), "GetDebugName")) or "none"))
+end
+
 local function targetIsDead()
     local ok, dead = pcall(UnitIsDead, "target")
     return ok and not isSecret(dead) and dead
@@ -2881,6 +3021,8 @@ local function refresh()
         -- UI-4: a dead mock shows "Target died", not a kill skull on a corpse.
         skullBar:SetMinMaxValues(0, math.max(previewState.health, 0.01))
         skullBar:SetValue(ns.lethalDamage(entries))
+        -- the sample swing is 8% of the mock mob's health
+        if ns.swing then ns.SwingIcon.Draw(ns.swing, math.max(previewState.health, 0.01), ns.lethalDamage(entries) + (db.swingKill and 8 or 0)) end
         skullWindow:SetShown(db.showSkull)
         setMarkerScale(100)
         local perDot = db.dotColors ~= "single"
@@ -2904,6 +3046,7 @@ local function refresh()
     local ok, err = pcall(function()
         skullBar:SetMinMaxValues(0, UnitHealth("target"))
         skullBar:SetValue(ns.lethalDamage(breakdown))
+        if ns.swing then ns.SwingIcon.Draw(ns.swing, UnitHealth("target"), ns.lethalDamage(breakdown, true)) end
         if healthBar then
             setMarkerScale(UnitHealthMax("target"))
             setMarkerValue(damage, unitKey("target"), updateSegments(perDot and breakdown or nil))
@@ -2913,6 +3056,7 @@ local function refresh()
     if not ok then
         if not updateErrorShown then
             updateErrorShown = true
+            trace("ERROR in marker update: " .. tostring(err))
             print("Display update failed: " .. tostring(err))
         end
         return hideAll()
@@ -2973,17 +3117,65 @@ local function applyDefaults()
     for key, value in pairs(DEFAULTS) do
         if db[key] == nil then db[key] = value end
     end
+    -- Defaults changed in 0.9.128: "Count one weapon hit" is on and the nameplate DoT colors are Rainbow. A saved value
+    -- that is still what the old defaults gave (or, for the colors, the other mode the presets wrote) follows them once.
+    if (db.defaultsRev or 0) < 1 then
+        if db.swingKill == false then db.swingKill = true end
+        if db.plateDotColors == "single" or db.plateDotColors == "each" then db.plateDotColors = "rainbow" end
+        db.defaultsRev = 1
+    end
 end
 
 -- Saved defaults only. Enable on a switched-off module calls this so the settings page
 -- can build; events, the target attach and the options registration stay on ADDON_LOADED.
+-- The learned tick sizes belong to the character: gear, level and talents differ from one character to the next (and a
+-- deleted character's numbers are nobody's), so they used to teach each character the sizes of whoever was played last.
+-- They live in db.chars[player GUID] = { ticks, weights, seen }; db.ticks and db.tickWeights point at the current
+-- character's tables, which is what the rest of the code reads (the alias is saved twice and rebuilt on every load). Only
+-- the 12 characters played most recently are kept (a file-level local more would break the 200-local limit of this file).
+-- Returns whether the player's GUID could be read yet.
+function ns.bindTicks()
+    local maxCharacters = 12
+    local ok, guid = pcall(UnitGUID, "player")
+    if not ok or isSecret(guid) or type(guid) ~= "string" or guid == "" then
+        db.ticks = type(db.ticks) == "table" and db.ticks or {}
+        db.tickWeights = type(db.tickWeights) == "table" and db.tickWeights or {}
+        return false
+    end
+    if type(db.chars) ~= "table" then db.chars = {} end
+    local mine = db.chars[guid]
+    if type(mine) ~= "table" then
+        mine = {}
+        db.chars[guid] = mine
+    end
+    if type(mine.ticks) ~= "table" then mine.ticks = {} end
+    if type(mine.weights) ~= "table" then mine.weights = {} end
+    mine.seen = type(time) == "function" and time() or 0
+    db.ticks, db.tickWeights = mine.ticks, mine.weights
+    local count = 0
+    for other, entry in pairs(db.chars) do
+        if type(other) ~= "string" or type(entry) ~= "table" then db.chars[other] = nil else count = count + 1 end
+    end
+    while count > maxCharacters do
+        local oldest, oldestSeen
+        for other, entry in pairs(db.chars) do
+            local seen = tonumber(entry.seen) or 0
+            if other ~= guid and (not oldest or seen < oldestSeen) then oldest, oldestSeen = other, seen end
+        end
+        if not oldest then break end
+        db.chars[oldest] = nil
+        count = count - 1
+    end
+    return true
+end
+
 function ns.ensureDB()
     UsefulPlatesAndTooltips_DoTInfoDB = UsefulPlatesAndTooltips_DoTInfoDB or {}
     db = UsefulPlatesAndTooltips_DoTInfoDB
     if db.version ~= DB_VERSION then
-        db.ticks, db.intervals, db.version = nil, nil, DB_VERSION
+        db.ticks, db.tickWeights, db.intervals, db.chars, db.version = nil, nil, nil, nil, DB_VERSION
     end
-    db.ticks = db.ticks or {}
+    ns.bindTicks()
     db.auras = db.auras or {} -- spell names whose debuff has been read on a mob (ns._verifyAuras)
     db.log = db.log or {}
     applyDefaults()
@@ -3161,12 +3353,14 @@ end
 
 function ns.resetLearnedTicks()
     wipe(db.ticks)
+    if db.tickWeights then wipe(db.tickWeights) end
     ns.dropSnapshots()
     print(BIT.L("Learned tick sizes cleared."))
 end
 
 function ns.forgetLearnedTick(key)
     db.ticks[key] = nil
+    if db.tickWeights then db.tickWeights[key] = nil end
     ns.dropSnapshots(key)
     trace("FORGET learned tick size for " .. tostring(key))
 end
@@ -3280,13 +3474,17 @@ frame:SetScript("OnEvent", function(self, event, ...)
             print(BIT.L("Couldn't create the options panel; slash commands still work (/dotinfo help)."))
         end
         if not attach() then print(BIT.L("Target portrait not found; kill icon shown beside the target frame.")) end
+        -- the weapon icon, lit by the DoTs plus one swing where the skull is lit by the DoTs alone (SwingIcon.lua)
+        if ns.SwingIcon then ns.swing = ns.SwingIcon.New(skullWindow, skullBar) end
         self:UnregisterEvent("ADDON_LOADED")
 
     elseif not db then
         return
 
     elseif event == "PLAYER_ENTERING_WORLD" then
+        ns.bindTicks() -- the player's GUID may not have been readable when the addon loaded
         wipe(dotsByTarget)
+        if ns._absorbedAt then wipe(ns._absorbedAt) end
         if ns.ProcDots then ns.ProcDots.Reset() end
         pendingCast, comboAtSend = nil, nil
         forgetPendingOutcomes()
@@ -3318,6 +3516,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         -- used while mob GUIDs are secret) belonged to the mob it showed before.
         local token = ...
         local old = type(token) == "string" and not isSecret(token) and ("plate:" .. token) or nil
+        if old and ns._absorbedAt then ns._absorbedAt[old] = nil end
         if old and (dotsByTarget[old] or (pendingCast and pendingCast.key == old)
             or (castInProgress and castInProgress.key == old)) then
             trace("PLATE " .. token .. (event == "NAME_PLATE_UNIT_REMOVED" and " removed" or " reused")
@@ -3338,6 +3537,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
             end
         end
         dotsByTarget.target = nil -- only used when the target's GUID is secret
+        if ns._absorbedAt then ns._absorbedAt.target = nil end
         if pendingCast and pendingCast.key == "target" then pendingCast.key = nil end
         resetComboCount() -- combo points belong to the target they were built on
         forgetPendingOutcomes()
@@ -3390,6 +3590,8 @@ frame:SetScript("OnUpdate", function(self, elapsed)
     sinceUpdate = 0
     safeRefresh()
 end)
+if BIT.Perf then BIT.Perf.Watch(frame, "OnEvent", "DoTInfo") end
+if BIT.Perf then BIT.Perf.Watch(frame, "OnUpdate", "DoTInfo") end
 
 ---------------------------------------------------------------------------
 -- Slash commands
@@ -3414,6 +3616,14 @@ SlashCmdList.BITDOTINFO = function(msg)
             end
             print(state)
         end
+    elseif cmd == "marker" then
+        ns.traceMarker()
+    elseif cmd == "marker bar" or cmd == "marker screen" then
+        -- where the damage markers hang: the health bar (the default) or the screen
+        db.markerParent = cmd == "marker screen" and "screen" or nil
+        ns.applyMarkerParent()
+        print("DoTInfo: the damage markers now hang on " .. (db.markerParent == "screen" and "the screen" or "the health bar")
+            .. (type(InCombatLockdown) == "function" and InCombatLockdown() and " (the target frame's moves when combat ends)" or "") .. ".")
     elseif cmd == "plates" then
         ns.probeNameplates()
     elseif cmd == "skull" then
@@ -3436,6 +3646,7 @@ SlashCmdList.BITDOTINFO = function(msg)
         print(BIT.L("/dotinfo line - toggle health bar markers on/off"))
         print(BIT.L("/dotinfo skull - show the kill icon for 5 seconds to check its position"))
         print(BIT.L("/dotinfo plates - check what the addon can reach on visible nameplates (logged)"))
+        print(BIT.L("/dotinfo marker - report where the damage marker is (also logged); marker screen | marker bar choose what it hangs on"))
         print(BIT.L("/dotinfo debug - toggle echoing the trace log (casts, ticks, estimates) to chat"))
         if not ns.Retail then print(BIT.L("/dotinfo ticks - show the learned tick sizes")) end
         print(BIT.L("/dotinfo check - read every spell in your spellbook and list the DoT descriptions it cannot read"))

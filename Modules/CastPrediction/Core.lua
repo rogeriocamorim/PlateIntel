@@ -70,6 +70,7 @@ local DEFAULTS = {
     showPartyFrames = true,
     showRaidFrames = true,
     showNameplates = true,
+    showManaCost = true,
     fillColor = "school",
     fillOpacity = 45,
     outlineStyle = "solid",
@@ -500,6 +501,15 @@ local function predictionFor(view, spellID)
     end
     return { min = min, max = max, value = value, factor = factor, talentPercent = talentPercent,
         auraPercent = auraPercent, samples = learnedSamples(spellID) }
+end
+
+-- What a cast of this spell is expected to do at once, { min, max, value, ... }, or nil for a heal, a pure DoT, a
+-- utility spell or a text that is not read as plain direct damage. TriggerGlow compares it with the target's health.
+function ns.PredictDirect(spellID)
+    if not settings then return nil end
+    local view = buildView(spellID, false)
+    if not view then return nil end
+    return predictionFor(view, spellID)
 end
 
 -- A cast the estimate cannot learn from: damage of its school landed within reach of the prediction, yet no hit
@@ -1037,8 +1047,12 @@ local function layoutDamage(markerBar, clip, host)
         markerBar:SetHeight(height)
     else
         local edge = reverse and "LEFT" or "RIGHT"
-        markerBar:SetPoint("TOP" .. edge, fill, "TOP" .. edge)
-        markerBar:SetPoint("BOTTOM" .. edge, fill, "BOTTOM" .. edge)
+        -- The native fill is as tall as the bar's frame, which on Blizzard's Camelot frames is taller than the bar the
+        -- player sees (the mask only cuts the fill): the marker, outline included, takes the visible bar's height.
+        local top, bottom = 0, 0
+        if BIT.Plate and BIT.Plate.BarInset then top, bottom = BIT.Plate.BarInset(host) end
+        markerBar:SetPoint("TOP" .. edge, fill, "TOP" .. edge, 0, -top)
+        markerBar:SetPoint("BOTTOM" .. edge, fill, "BOTTOM" .. edge, 0, bottom)
         markerBar:SetWidth(width)
     end
     return true
@@ -1054,6 +1068,9 @@ end
 -- Damage retreats from the current HP edge; clipping contains overkill within the health bar.
 local markerClip = CreateFrame("Frame", nil, UIParent)
 markerClip:SetClipsChildren(true)
+-- DoTInfo's layer scan of the target frame leaves out marks of ours that sit on the bar (see DoTInfo/Core.lua).
+BIT.OwnOverlays = BIT.OwnOverlays or setmetatable({}, { __mode = "k" })
+BIT.OwnOverlays[markerClip] = true
 local marker = CreateFrame("StatusBar", "PlateIntel_CastPredictionMarker", markerClip)
 marker:SetStatusBarTexture(WHITE)
 marker:SetStatusBarColor(0, 0, 0, 0)
@@ -1281,7 +1298,7 @@ local function topLayerOf(frame)
     if not frame or frame == UIParent then return end
     local topStrata, topLevel = "BACKGROUND", 0
     local function visit(f, depth)
-        if f == markerClip then return end
+        if f == markerClip or (BIT.OwnOverlays and BIT.OwnOverlays[f]) then return end
         if depth > 0 then
             -- hidden only when the client says so: an unreadable or secret answer counts as shown
             local okShown, shown = pcall(f.IsShown, f)
@@ -1613,6 +1630,8 @@ local function createFrameWidgets(bar)
     local w = { layerAt = -math.huge }
     w.clip = CreateFrame("Frame", nil, UIParent)
     w.clip:SetClipsChildren(true)
+    BIT.OwnOverlays = BIT.OwnOverlays or setmetatable({}, { __mode = "k" })
+    BIT.OwnOverlays[w.clip] = true -- the layer scans of the unit frames leave our own mark out (see DoTInfo/Core.lua)
     w.marker = CreateFrame("StatusBar", nil, w.clip)
     w.marker:SetStatusBarTexture(WHITE)
     w.marker:SetStatusBarColor(0, 0, 0, 0)
@@ -1686,6 +1705,12 @@ local function drawFrameWidgets(w, entry, now)
         name = cast.name, min = prediction.min, max = prediction.max, value = prediction.value,
         school = cast.view.school, channel = cast.channel, preview = cast.preview, spellID = cast.spellID,
     }
+    -- Hung on the bar itself, as the target marker is: a mark hung on the screen did not draw on the Forever client's unit
+    -- frames. A bar cannot be reparented to in combat; the mark then waits on the screen for the end of it.
+    if not (type(InCombatLockdown) == "function" and InCombatLockdown()) then
+        local okParent, parent = pcall(w.clip.GetParent, w.clip)
+        if okParent and parent ~= bar then pcall(w.clip.SetParent, w.clip, bar) end
+    end
     if not layoutDamage(w.marker, w.clip, bar) then hideFrameWidgets(w); return end
     local barMask = BIT.UI and BIT.UI.BarMask
     if barMask and w.maskedBar ~= bar then
@@ -2315,6 +2340,8 @@ frame:SetScript("OnUpdate", function(self, elapsed)
     sinceUpdate = 0
     safeRefresh()
 end)
+if BIT.Perf then BIT.Perf.Watch(frame, "OnEvent", "CastPrediction") end
+if BIT.Perf then BIT.Perf.Watch(frame, "OnUpdate", "CastPrediction") end
 
 
 -- /upt castpred layers: what sits where on the target frame, for a report when the marker draws under Blizzard's bar.

@@ -1,9 +1,9 @@
--- PlateIntel module CastPrediction: the mana a cast will cost, shown on your own mana bar while you cast.
--- Written for PlateIntel. Copyright (c) 2026 Rogerio Camorim. GPL-3.0-or-later, see LICENSE.
+-- CastPrediction: the estimated mana cost, shown on your own mana bar while you cast.
+-- Copyright (c) 2026 Rogerio Camorim. GPL-3.0-or-later, see LICENSE.
 --
--- The client takes the mana only when the cast lands. From UNIT_SPELLCAST_START to its end, a segment on the player's
--- mana bar marks what is about to go: it ends where the mana now is and reaches back by the spell's cost, so it
--- follows the bar while mana regenerates and shrinks to nothing when the cast ends.
+-- From UNIT_SPELLCAST_START to its end, a segment marks the estimated cost. On Forever it
+-- extends to the right of the current mana, illustrating mana already spent; on Retail it
+-- extends back from the current mana, illustrating the cost yet to be paid.
 --
 -- The cost is the spell's own mana cost (GetSpellPowerCost), a plain number. The bar's maximum may be secret in
 -- combat on WoW: Forever, so the segment is a StatusBar (it accepts secret values, no Lua math on them), anchored to
@@ -11,6 +11,9 @@
 --
 -- Instant spells and channels take their mana at once, so there is nothing to show before it goes.
 local _, BIT = ...
+
+local talents = BIT.Module("CastPrediction").Talents
+local isRetail = talents and type(talents.IsRetail) == "function" and talents.IsRetail()
 
 local MANA = (Enum and Enum.PowerType and Enum.PowerType.Mana) or 0
 local WHITE = "Interface\\Buttons\\WHITE8X8"
@@ -76,7 +79,7 @@ local function build(host)
     local bar = CreateFrame("StatusBar", nil, clip)
     bar:SetStatusBarTexture(WHITE)
     bar:SetStatusBarColor(COLOR[1], COLOR[2], COLOR[3], COLOR[4])
-    bar:SetReverseFill(true) -- fills from the right: the end of the mana
+    bar:SetReverseFill(isRetail and true or false)
     overlay = { clip = clip, bar = bar }
   end
   overlay.host = host
@@ -96,15 +99,16 @@ local function show(cost)
   if not host then return hide() end
   local o = build(host)
   local fill = read(host.GetStatusBarTexture, host)
+  if not fill then return hide() end
   local width = read(host.GetWidth, host)
   local ok = pcall(function()
     o.bar:ClearAllPoints()
-    if fill then
+    if isRetail then
       o.bar:SetPoint("TOPRIGHT", fill, "TOPRIGHT")
       o.bar:SetPoint("BOTTOMRIGHT", fill, "BOTTOMRIGHT")
     else
-      o.bar:SetPoint("TOPRIGHT", host, "TOPRIGHT")
-      o.bar:SetPoint("BOTTOMRIGHT", host, "BOTTOMRIGHT")
+      o.bar:SetPoint("TOPLEFT", fill, "TOPRIGHT")
+      o.bar:SetPoint("BOTTOMLEFT", fill, "BOTTOMRIGHT")
     end
     o.bar:SetWidth(type(width) == "number" and width > 0 and width or 100)
     o.bar:SetMinMaxValues(0, UnitPowerMax("player", MANA))
@@ -128,12 +132,24 @@ for _, event in ipairs({ "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED", "UNIT_S
     "UNIT_SPELLCAST_SUCCEEDED", "UNIT_SPELLCAST_CHANNEL_START" }) do
   frame:RegisterUnitEvent(event, "player")
 end
-frame:SetScript("OnEvent", function(_, event, _, _, spellID)
+local shownCast -- the cast GUID the segment is shown for, when the client gives a readable one
+
+frame:SetScript("OnEvent", function(_, event, _, castGUID, spellID)
   if event == "PLAYER_LOGIN" then
     BIT.Settings("CastPrediction", { showManaCost = true }) -- the option's default, before the settings tab reads it
     return
   end
-  if event ~= "UNIT_SPELLCAST_START" then return hide() end
+  if type(castGUID) ~= "string" or isSecret(castGUID) then castGUID = nil end
+  if event ~= "UNIT_SPELLCAST_START" then
+    -- Pressing another spell during a cast fires FAILED (and an instant one SUCCEEDED) with its own cast GUID
+    -- while the first cast goes on: only the end of the cast that is shown hides the segment.
+    if shownCast and castGUID and castGUID ~= shownCast
+      and (event == "UNIT_SPELLCAST_STOP" or event == "UNIT_SPELLCAST_FAILED"
+        or event == "UNIT_SPELLCAST_INTERRUPTED" or event == "UNIT_SPELLCAST_SUCCEEDED") then return end
+    shownCast = nil
+    return hide()
+  end
+  shownCast = castGUID
   if not enabled() then return hide() end
   if type(spellID) ~= "number" or isSecret(spellID) then spellID = castingSpellID() end
   local cost = spellID and manaCost(spellID)
