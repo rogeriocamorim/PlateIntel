@@ -109,6 +109,7 @@ ns.refreshNames = {
 }
 
 -- Traps that put a DoT on the first enemy to walk in (ProcDots.lua): placing one only arms it.
+ns.IGNORED_SPELLS = IGNORED_SPELLS -- RogueAuras.lua keeps its own list of area spells away from the generic DoT segments
 ns.TRAP_DOTS = { ["Immolation Trap"] = true }
 -- Cast at a mob, but the DoT starts later (ProcDots.lua finds the start by its rhythm).
 ns.DELAYED_DOTS = { ["Wyvern Sting"] = true }
@@ -170,6 +171,12 @@ local DEFAULTS = {
     labelColor = "white",
     -- Misc
     procDots = true, -- Ignite (mage) and Deep Wounds (warrior), lit by crits (ProcDots.lua)
+    nativeDots = true, -- Forever: the native aura segments (Deadly Poison, Deep Wound, Ignite, ...) as a whole (RogueAuras.lua)
+    nativeGateReplace = true, -- experiment (Forever): nameplate DoT segments drawn by aura-gated twins (RogueAuras.lua)
+    nativeGate = true, -- experiment (Forever): a segment sized by the plain DoT, shown only while the real aura is there
+    nativeShowAll = false, -- diagnostic (Forever): native segments are drawn even where a plain DoT of the same name is
+    nativeStacks = false, -- Forever: the stack count of the Deadly Poison segment as a small number above the bar
+    nativeAllDots = true, -- experimental (Forever): a native aura segment for every DoT you know (RogueAuras.lua)
     deathMark = false, -- experimental: Death Mark (rogue) stored damage (DeathMark.lua); counts others' hits in a group
     debug = false,
     -- Accuracy
@@ -1112,6 +1119,13 @@ local function onPlayerCast(spellID, castGUID)
     -- A finisher's tick size depends on the points spent, so learned sizes are kept per point count.
     local tickKey = spellID
     if isFinisher then tickKey = comboPoints and (spellID .. "x" .. comboPoints) or nil end
+
+    if ns.RogueNative and ns.RogueNative.NoteCast then
+        ns.RogueNative.NoteCast(spellID, name,
+            (not ns.Retail and tickKey and db.ticks[tickKey] and duration
+                and (db.ticks[tickKey] * math.max(1, math.floor(duration / (statedInterval or KNOWN_TICK_INTERVALS[name] or DEFAULT_TICK_INTERVAL) + 0.5))))
+            or total)
+    end
 
     -- A trap only arms: the DoT starts when it springs (ProcDots.lua).
     if ns.ProcDots and ns.TRAP_DOTS[name] and ns.ProcDots.ArmTrap(spellID, name, desc, total, school, duration, statedInterval) then
@@ -2828,7 +2842,7 @@ end
 function ns.anchorMarker()
     if not healthBar then return end
     local top, bottom = 0, 0
-    if not previewHost and BIT.Plate and BIT.Plate.BarInset then top, bottom = BIT.Plate.BarInset(healthBar) end
+    if BIT.Plate and BIT.Plate.BarInset then top, bottom = BIT.Plate.BarInset(healthBar) end
     if ns._anchoredBar == healthBar and ns._anchoredTop == top and ns._anchoredBottom == bottom then return end
     ns._anchoredBar, ns._anchoredTop, ns._anchoredBottom = healthBar, top, bottom
     remainingBar:ClearAllPoints()
@@ -2881,7 +2895,7 @@ end
 
 local function hideMarkers()
     remainingBar:Hide()
-    if ns.Retail and ns.Retail.UpdatePoisonOffset then ns.Retail.UpdatePoisonOffset(TargetFrame) end
+    if (ns.Retail or ns.RogueNative) and (ns.Retail or ns.RogueNative).UpdatePoisonOffset then (ns.Retail or ns.RogueNative).UpdatePoisonOffset(TargetFrame) end
     fillLayer.refreshMark:Hide()
     markerScale = nil -- grow in again next time it appears
 end
@@ -2971,6 +2985,23 @@ function ns.traceMarker()
         tostring(markerShownValue), shownSegments, tostring(remainingBar:IsShown())))
     local cast = _G.PlateIntel_CastPredictionMarker
     say("cast marker: " .. (cast and (frameLine(cast) .. " | parent " .. call(cast:GetParent(), "GetDebugName")) or "none"))
+    -- the focus frame's widgets (Focus.lua): where the bar is and where the marker and the kill icon were put
+    local focusWidgets, focusBar = nil, nil
+    if ns.focusState then focusWidgets, focusBar = ns.focusState() end
+    say("focus: exists " .. tostring(UnitExists("focus")) .. ", mode " .. tostring(db.focusMode) .. ", icon position "
+        .. tostring(db.nameplateIconPosition) .. " offset " .. tostring(db.plateIconOffsetX) .. "/" .. tostring(db.plateIconOffsetY)
+        .. ", custom path '" .. tostring(BIT.Frames and BIT.Frames.Get("focus") or "") .. "'")
+    say("focus bar: " .. (focusBar and (regionName(focusBar) .. " " .. frameLine(focusBar)) or "none yet (needs a focus with a DoT on it)"))
+    if focusWidgets then
+        say("focus marker: " .. frameLine(focusWidgets.marker) .. " | parent " .. call(focusWidgets.marker:GetParent(), "GetDebugName")
+            .. " | shown " .. tostring(focusWidgets.marker:IsShown()))
+        local icon = focusWidgets.iconWindow
+        local anchor = { pcall(icon.GetPoint, icon, 1) }
+        say("focus icon: " .. frameLine(icon) .. " | parent " .. call(icon:GetParent(), "GetDebugName") .. " | shown "
+            .. tostring(icon:IsShown()) .. " | anchor " .. tostring(anchor[2]) .. " to "
+            .. (type(anchor[3]) == "table" and call(anchor[3], "GetDebugName") or "?") .. " " .. tostring(anchor[4])
+            .. " offset " .. tostring(anchor[5]) .. "/" .. tostring(anchor[6]))
+    end
 end
 
 local function targetIsDead()
@@ -3077,8 +3108,8 @@ local reportedErrors = {}
 local function safeRefresh()
     -- Native aura containers render their own protected timers; keep an unavailable host
     -- or API from interrupting the separate cast-based damage estimate.
-    if ns.Retail and ns.Retail.UpdateRogueAuras then
-        local ok, err = pcall(ns.Retail.UpdateRogueAuras)
+    if (ns.Retail or ns.RogueNative) and (ns.Retail or ns.RogueNative).UpdateRogueAuras then
+        local ok, err = pcall((ns.Retail or ns.RogueNative).UpdateRogueAuras)
         if not ok and not reportedErrors[err] then
             reportedErrors[err] = true
             trace("ERROR in rogue aura update: " .. tostring(err))
@@ -3099,7 +3130,7 @@ local function safeRefresh()
             trace("ERROR in API update: " .. tostring(apiErr))
         end
     end
-    if ns.Retail and ns.Retail.UpdatePoisonOffset then ns.Retail.UpdatePoisonOffset(TargetFrame) end
+    if (ns.Retail or ns.RogueNative) and (ns.Retail or ns.RogueNative).UpdatePoisonOffset then (ns.Retail or ns.RogueNative).UpdatePoisonOffset(TargetFrame) end
 end
 
 ---------------------------------------------------------------------------
@@ -3123,6 +3154,11 @@ local function applyDefaults()
         if db.swingKill == false then db.swingKill = true end
         if db.plateDotColors == "single" or db.plateDotColors == "each" then db.plateDotColors = "rainbow" end
         db.defaultsRev = 1
+    end
+    -- The 0.9.131 beta turns the aura-gated experiments on; saved values from the alphas (default off) follow once.
+    if (db.defaultsRev or 0) < 2 then
+        db.nativeGateReplace, db.nativeGate, db.nativeAllDots = true, true, true
+        db.defaultsRev = 2
     end
 end
 
@@ -3208,12 +3244,19 @@ end
 function ns.stylePoisonSegment(timer, health, config)
     local style = findById(FILL_STYLES, config.fillTexture)
     local perDot = config.dotColors ~= "single"
-    local color = perDot and dotColor({ name = config.name, school = 8 }, config.dotColors) or nil
+    local color = perDot and dotColor({ name = config.name, school = config.school or 8 }, config.dotColors) or nil
     local r, g, b, a = colorOf(config.fillColor, config.fillOpacity)
     if color then r, g, b = color[1], color[2], color[3] end
     local poisonSpan = timer:GetStatusBarTexture()
     timer:SetStatusBarColor(0, 0, 0, 0)
-    local texture = timer:CreateTexture(nil, "ARTWORK")
+    local fillHost = timer
+    if config.fillAbove then
+        -- The fill gets a frame of its own above the bar, like the outline below: a fill that is a region of the bar
+        -- itself was never seen on a nameplate (the outline, a child frame, was).
+        fillHost = CreateFrame("Frame", nil, timer, "DisableUntrustedLayoutScriptsTemplate")
+        fillHost:SetAllPoints(timer)
+    end
+    local texture = fillHost:CreateTexture(nil, "ARTWORK")
     texture:SetPoint("TOPLEFT", poisonSpan, "TOPLEFT")
     texture:SetPoint("BOTTOMRIGHT", poisonSpan, "BOTTOMRIGHT")
     texture:SetTexture((style.path and not style.gradient) and style.path or WHITE,
@@ -3460,7 +3503,7 @@ frame:SetScript("OnEvent", function(self, event, ...)
         end
         ns.ensureDB()
         trace("===== session start =====")
-        if ns.Retail and ns.Retail.StartRogueAuras then ns.Retail.StartRogueAuras() end
+        if (ns.Retail or ns.RogueNative) and (ns.Retail or ns.RogueNative).StartRogueAuras then (ns.Retail or ns.RogueNative).StartRogueAuras() end
         if ns.RogueEffects then ns.RogueEffects.Start(unitKey) end
         local added = ns.locale.addClientNames(NAME_TABLES, function(spellID)
             local name = C_Spell and C_Spell.GetSpellName and C_Spell.GetSpellName(spellID)
@@ -3584,7 +3627,7 @@ end)
 local sinceUpdate = 0
 frame:SetScript("OnUpdate", function(self, elapsed)
     if db then animateMarker(elapsed) end
-    if db and ns.Retail and ns.Retail.UpdatePoisonOffset then ns.Retail.UpdatePoisonOffset(TargetFrame) end
+    if db and (ns.Retail or ns.RogueNative) and (ns.Retail or ns.RogueNative).UpdatePoisonOffset then (ns.Retail or ns.RogueNative).UpdatePoisonOffset(TargetFrame) end
     sinceUpdate = sinceUpdate + elapsed
     if sinceUpdate < UPDATE_INTERVAL or not db then return end
     sinceUpdate = 0

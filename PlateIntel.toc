@@ -67,6 +67,7 @@ Modules\SpellDamageInfo\Parser_koKR.lua
 Modules\SpellDamageInfo\Estimate.lua
 Modules\SpellDamageInfo\History.lua
 Modules\SpellDamageInfo\Core.lua
+Modules\SpellDamageInfo\API.lua
 Modules\SpellDamageInfo\Options.lua
 
 # CastPrediction: the damage a cast in flight should deal, on the target's bar and plates
@@ -93,6 +94,8 @@ Modules\DoTInfo\MeterLearning.lua
 Modules\DoTInfo\ProcDots.lua
 Modules\DoTInfo\DeathMark.lua
 Modules\DoTInfo\RogueEffects.lua
+Modules\DoTInfo\NativeAuraIDs.lua
+Modules\DoTInfo\RogueAuras.lua
 Modules\DoTInfo\Options.lua
 Modules\DoTInfo\Nameplates.lua
 Modules\DoTInfo\Focus.lua
@@ -106,6 +109,8 @@ Modules\CastAdvisor\MobList.lua
 Modules\CastAdvisor\Options.lua
 
 Modules\StatsInfo\Weights.lua
+Modules\StatsInfo\EffectData.lua
+Modules\StatsInfo\Effects.lua
 Modules\StatsInfo\StatsInfo.lua
 Modules\StatsInfo\BagMarkers.lua
 Modules\StatsInfo\WorldMarkers.lua
@@ -137,5 +142,7 @@ Modules\TriggerGlow\Spells.lua
 Modules\TriggerGlow\Core.lua
 Modules\TriggerGlow\Options.lua
 
+# The Frames page: where another unit frame addon's bars are (a tool page, before Debug)
+Core\FramesPage.lua
 # The diagnostic commands as buttons; last, so its tab is the last one
 Core\Debug.lua

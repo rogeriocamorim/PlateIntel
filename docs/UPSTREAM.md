@@ -4,7 +4,7 @@ PlateIntel is a fork of [Ironship/UsefulPlatesAndTooltips](https://github.com/Ir
 (GPL-3.0-or-later). The addon is renamed, so Git cannot merge upstream directly; `tools/sync_upstream.py` renames
 upstream's files the same way and does a 3-way merge per file.
 
-Last synced upstream commit: `7a3a3e70e0382d2ba870ff00d5461921c25a4ddf` (upstream Forever 0.9.131)
+Last synced upstream commit: `a6ac509f942210879f41d5f2d7fbb480bae67ce5` (upstream Forever 0.9.140)
 
 ## Syncing a new upstream release
 

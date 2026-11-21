@@ -129,6 +129,11 @@ local function buildSettings(parent)
     "Divine Grace glows while your friendly target (not you) is below the share of health set below."), y)
   y = place(checkRow(parent, "Reactive spells", "reactive",
     "Overpower, Revenge, Mongoose Bite, Counterattack and Victory Rush glow while the game says they can be cast."), y)
+  y = place(checkRow(parent, "Dispel and cure spells", "dispel",
+    "Dispel Magic, Purge, Cure Disease, Purify, Cleanse, Cure Poison and Remove Curse glow while your target has an "
+    .. "effect the spell can remove (a friend's debuff, or an enemy's Magic buff for Dispel Magic and Purge). The "
+    .. "game's own aura list does the matching, so it works in a fight, where addons cannot read auras. It is always "
+    .. "a pulsing border, whatever the style below says."), y)
   for _, rule in ipairs(ns.RULES) do
     y = place(spellRow(parent, rule), y)
   end
@@ -168,6 +173,8 @@ local function buildSettings(parent)
   y = place(choiceRow(parent, "Heal color", "healColor", colorList(), "Tints the glow of Divine Grace."), y)
   y = place(choiceRow(parent, "Reactive color", "reactiveColor", colorList(),
     "Tints the glow of Overpower, Revenge, Mongoose Bite, Counterattack and Victory Rush."), y)
+  y = place(choiceRow(parent, "Dispel color", "dispelColor", colorList(),
+    "Tints the glow of the dispel and cure spells."), y)
   y = place(choiceRow(parent, "Lethal damage color", "killColor", colorList(),
     "Tints the glow of a spell that would kill the target. On a spell that also has its own window "
     .. "(Execute) that spell's color is used."), y)
@@ -176,7 +183,7 @@ local function buildSettings(parent)
   y = place(sliderRow(parent, "Opacity", "opacity", 10, 100, 5, "%", nil), y, 40)
 
   y = section(parent, y, "TRY IT")
-  y = place(buttonRow(parent, "Test on my bars", "Glow 6 s", function()
+  y = place(buttonRow(parent, "Simulate on my bars", "Glow 6 s", function()
     ns.Test(6)
   end, "Every button that holds one of the spells glows for six seconds, whatever your target is, so the "
     .. "look can be judged without waiting for a low-health enemy."), y)
@@ -289,6 +296,7 @@ local SAMPLES = {
   { group = "hp", icon = 5308, fallback = "Interface\\Icons\\INV_Sword_48", label = "Execute-type" },
   { group = "heal", icon = 1277370, fallback = "Interface\\Icons\\Spell_Holy_PowerWordShield", label = "Heal" },
   { group = "reactive", icon = 7384, fallback = "Interface\\Icons\\Ability_MeleeDamage", label = "Reactive" },
+  { group = "dispel", icon = 527, fallback = "Interface\\Icons\\Spell_Holy_DispelMagic", label = "Dispel" },
   { group = "kill", icon = 133, fallback = "Interface\\Icons\\Spell_Fire_FlameBolt", label = "Lethal" },
 }
 
@@ -321,26 +329,31 @@ local function buildPreview(pane)
   rule:SetPoint("TOPRIGHT", -8, -34)
 
   wipe(sampleButtons)
-  local slot = (PREVIEW_WIDTH - 2 * SIDE) / #SAMPLES
-  for i, sample in ipairs(SAMPLES) do
-    local f = CreateFrame("Frame", nil, pane)
-    f:SetSize(44, 44)
-    f:SetPoint("TOP", pane, "TOPLEFT", SIDE + slot * (i - 0.5), -88)
-    local icon = f:CreateTexture(nil, "ARTWORK")
-    icon:SetAllPoints()
-    icon:SetTexture(iconFor(sample))
-    local cap = pane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-    cap:SetPoint("TOP", f, "BOTTOM", 0, -32)
-    cap:SetText(BIT.L(sample.label))
-    sampleButtons[#sampleButtons + 1] = { frame = f, group = sample.group, on = true }
+  local rows = { { 1, 2, 3 }, { 4, 5 } }
+  for r, indices in ipairs(rows) do
+    local slot = (PREVIEW_WIDTH - 2 * SIDE) / #indices
+    local y = -88 - (r - 1) * 100
+    for col, i in ipairs(indices) do
+      local sample = SAMPLES[i]
+      local f = CreateFrame("Frame", nil, pane)
+      f:SetSize(44, 44)
+      f:SetPoint("TOP", pane, "TOPLEFT", SIDE + slot * (col - 0.5), y)
+      local icon = f:CreateTexture(nil, "ARTWORK")
+      icon:SetAllPoints()
+      icon:SetTexture(iconFor(sample))
+      local cap = pane:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+      cap:SetPoint("TOP", f, "BOTTOM", 0, -32)
+      cap:SetText(BIT.L(sample.label))
+      sampleButtons[#sampleButtons + 1] = { frame = f, group = sample.group, on = true }
+    end
   end
 
   local hint = pane:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-  hint:SetPoint("TOPLEFT", SIDE, -190)
+  hint:SetPoint("TOPLEFT", SIDE, -296)
   hint:SetWidth(PREVIEW_WIDTH - 2 * SIDE)
   hint:SetJustifyH("LEFT")
-  hint:SetText(BIT.L("The four buttons show the style, color, size and opacity as set. The glow on your action "
-    .. "bars appears only while the spell's condition holds. \"Test on my bars\" shows it on the real buttons."))
+  hint:SetText(BIT.L("The five buttons show the style, color, size and opacity as set. The glow on your action "
+    .. "bars appears only while the spell's condition holds. \"Simulate on my bars\" shows it on the real buttons."))
 
   pane.title = title
   pane.hint = hint
@@ -362,7 +375,7 @@ if BIT.RegisterTab then
     title = "Trigger glow",
     summary = "A glow on the action bar button of a spell whose moment has come: Execute and Hammer of Wrath at "
       .. "low target health, Divine Grace for a hurt friend, Overpower, Revenge and the other reactive spells "
-      .. "when the game says they can be cast (experimental).",
+      .. "when the game says they can be cast, Dispel Magic and Cure Disease when the target has something to remove (experimental).",
     width = WINDOW_WIDTH, height = WINDOW_HEIGHT,
     build = function(parent)
       if window == parent then return end

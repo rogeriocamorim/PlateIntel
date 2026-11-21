@@ -122,10 +122,10 @@ BIT.RegisterLocale("deDE", {
     "Ein Tank hat zwei Zahlen: fürs Überleben (weniger erlittener Schaden) und für Bedrohung (Aggro halten).",
   ["With nothing worth comparing, or a change past the cap: \">300% ...\", at most triple."] =
     "Bei nichts Vergleichbarem oder einer Änderung über der Obergrenze: \">300% ...\", höchstens dreifach.",
-  ["Each healer spec (druid Restoration, priest Holy, paladin Holy, shaman Restoration) is rated by this addon's own starter heuristic, and its line is marked \"(approx.)\": an approximate item score, not a measured healing gain."] =
-    "Jede Heiler-Spezialisierung (Druide Wiederherstellung, Priester Heilig, Paladin Heilig, Schamane Wiederherstellung) wird nach der eigenen Startheuristik dieses Addons bewertet, und ihre Zeile ist mit \"(ca.)\" markiert: eine ungefähre Gegenstandswertung, kein gemessener Heilungsgewinn.",
-  ["Its weights are design choices of this addon (tools/data/healer_weights.json): 1 x +Healing, 1 x Spell Power, 0.5 x Intellect, 0.5 x Spirit and 2 x MP5. Every other stat counts for nothing to it."] =
-    "Ihre Gewichte sind Designentscheidungen dieses Addons (tools/data/healer_weights.json): 1 x +Heilung, 1 x Zaubermacht, 0,5 x Intelligenz, 0,5 x Willenskraft und 2 x MP5. Jeder andere Wert zählt für sie nichts.",
+  ["Each healer spec (druid Restoration, priest Holy, paladin Holy, shaman Restoration) is rated by one shared healer model, and its line is marked \"(approx.)\": an approximate item score, not a measured healing gain."] =
+    "Jede Heiler-Spezialisierung (Druide Wiederherstellung, Priester Heilig, Paladin Heilig, Schamane Wiederherstellung) wird nach einem gemeinsamen Heiler-Modell bewertet, und ihre Zeile ist mit \"(ca.)\" markiert: ein ungefährer Gegenstandswert, kein gemessener Heilungsgewinn.",
+  ["Its weights are the simulator repo's EP presets for a Holy priest, the mean of raid and single-target healing (tools/data/healer_weights.json): 1 x +Healing, 1 x Spell Power, 0.325 x Intellect, 0.275 x Spirit, 0.6 x MP5, 0.265 x Crit and 0.49 x Haste. Every other stat counts for nothing to it."] =
+    "Ihre Gewichte sind die EP-Voreinstellungen des Simulator-Repos für einen Heilig-Priester, der Mittelwert aus Schlachtzugs- und Einzelzielheilung (tools/data/healer_weights.json): 1 x +Heilung, 1 x Zaubermacht, 0,325 x Intelligenz, 0,275 x Willenskraft, 0,6 x MP5, 0,265 x Krit und 0,49 x Tempo. Jeder andere Wert zählt dafür nichts.",
   ["The other ratings use ForeverSim's stat weights, measured on a level 60 build of each spec with its own talents, gear and buffs: below 60 they are an estimate."] =
     "Die übrigen Bewertungen nutzen die Wertgewichtungen von ForeverSim, gemessen an einem Stufe-60-Aufbau jeder Spezialisierung mit eigenen Talenten, eigener Ausrüstung und eigenen Stärkungszaubern: unter Stufe 60 sind sie nur eine Schätzung.",
   ["A weapon's damage per second counts as the simulator weighs it for the spec: main hand, off hand and ranged slot apart."] =
@@ -136,6 +136,100 @@ BIT.RegisterLocale("deDE", {
   ["Off: one line, the best spec and its arrow. Hold Shift for the full breakdown."] =
     "Aus: eine Zeile, die beste Spezialisierung und ihr Pfeil. Haltet die Umschalttaste gedrückt für die vollständige Aufschlüsselung.",
   ["Hold Shift for the full breakdown."] = "Haltet die Umschalttaste gedrückt für die vollständige Aufschlüsselung.",
+
+  -- hit and expertise caps
+  ["Count hit and expertise only up to their caps"] =
+    "Trefferwertung und Waffenkunde nur bis zu ihrem Limit zählen",
+  ["Spell hit counts up to 17%, melee and ranged hit up to 8% (a dual wielder's melee hit is not capped here), expertise up to 6.5%: above that a point is worth nothing, so an item whose hit you no longer need is not rated for it. Uses your current hit and expertise as the character sheet shows them. Off: every point counts in full."] =
+    "Zaubertreffer zählt bis 17 %, Nah- und Fernkampftreffer bis 8 % (der Nahkampftreffer eines Zweihand-Kämpfers mit zwei Waffen ist hier nicht begrenzt), Waffenkunde bis 6,5 %: darüber ist ein Punkt nichts wert, also wird ein Gegenstand, dessen Treffer Ihr nicht mehr braucht, dafür nicht bewertet. Nutzt Euren aktuellen Treffer und Eure Waffenkunde, wie das Charakterblatt sie zeigt. Aus: jeder Punkt zählt voll.",
+  ["HIT AND EXPERTISE CAPS"] =
+    "TREFFER- UND WAFFENKUNDE-LIMITS",
+  ["Hit and expertise stop mattering at a cap: spell hit at 17%, melee and ranged hit at 8%, expertise at 6.5% (the simulator's own caps for each spec). The ratings count them only up to the cap, from the hit and expertise your character has now, so an item whose hit you no longer need is not rated for it, and one that takes you across the cap is rated for the part below it."] =
+    "Trefferwertung und Waffenkunde sind ab einem Limit nutzlos: Zaubertreffer ab 17 %, Nah- und Fernkampftreffer ab 8 %, Waffenkunde ab 6,5 % (die Limits des Simulators für jede Spezialisierung). Die Bewertung zählt sie nur bis zum Limit, ausgehend vom Treffer und der Waffenkunde Eures Charakters jetzt: ein Gegenstand, dessen Treffer Ihr nicht mehr braucht, wird dafür nicht bewertet, und einer, der Euch über das Limit bringt, für den Teil darunter.",
+  ["Hit counts up to %s%%: you have %s%%"] =
+    "Treffer zählt bis %s %%: Ihr habt %s %%",
+  ["Expertise counts up to %s%%: you have %s%%"] =
+    "Waffenkunde zählt bis %s %%: Ihr habt %s %%",
+
+  -- effects, set bonuses and consumables
+  ["Count effects and set bonuses in the ratings"] =
+    "Effekte und Set-Boni in die Bewertung einrechnen",
+  ["A trinket is mostly its use effect, a set piece its set's bonus: the ratings, the arrows and the quest reward marks count them (an effect that is up part of the time counts for that part). Damage, healing and stacking effects are not stats; such an item says it has one that is not rated."] =
+    "Ein Schmuckstück ist meist sein Benutzen-Effekt, ein Set-Teil der Bonus seines Sets: Bewertung, Pfeile und Questbelohnungs-Markierungen zählen sie mit (ein Effekt, der nur zeitweise aktiv ist, zählt für diesen Anteil). Schadens-, Heil- und Stapel-Effekte sind keine Werte; ein solcher Gegenstand sagt, dass er einen nicht bewerteten hat.",
+  ["Rate elixirs, flasks, food, potions and scrolls"] =
+    "Elixiere, Fläschchen, Essen, Tränke und Schriftrollen bewerten",
+  ["Under a consumable that gives stats, what its buff is worth to each spec, as a share of what your gear is worth."] =
+    "Unter einem Verbrauchsgut mit Werten: was sein Bonus jeder Spezialisierung wert ist, als Anteil des Wertes Eurer Ausrüstung.",
+  ["Tank lines: uncrittable and avoidance"] =
+    "Tank-Zeilen: Kritimmun und Vermeidung",
+  ["Under a tank's gear: how far the defense skill is from uncrittable (a boss three levels above you) and where avoidance stands against its cap. Off: both lines are left out and the tank ratings stay. They show only while a tank spec is rated (Specs to rate)."] =
+    "Unter der Ausrüstung eines Tanks: wie weit die Verteidigung von Kritimmun (gegen einen Boss, drei Stufen über Euch) entfernt ist und wo die Vermeidung gegenüber ihrem Limit steht. Aus: beide Zeilen entfallen, die Tank-Bewertung bleibt. Sie erscheinen nur, solange eine Tank-Spezialisierung bewertet wird (Zu bewertende Spezialisierungen).",
+  ["EFFECTS, SETS AND CONSUMABLES"] =
+    "EFFEKTE, SETS UND VERBRAUCHSGÜTER",
+  ["Beside its stats, an item can have an effect (a trinket's use, a weapon's proc) and a set bonus. Those that give stats are counted at the share of the time they are up: 280 attack power for 20 s every 120 s counts as 17% of it. A proc by chance per hit is an estimate (one eligible hit every two seconds)."] =
+    "Neben seinen Werten kann ein Gegenstand einen Effekt (das Benutzen eines Schmuckstücks, der Proc einer Waffe) und einen Set-Bonus haben. Was Werte gibt, zählt mit dem Anteil der Zeit, in der es aktiv ist: 280 Angriffskraft für 20 Sek. alle 120 Sek. zählen zu 17 %. Ein Proc mit Chance pro Treffer ist eine Schätzung (alle zwei Sekunden ein möglicher Treffer).",
+  ["Damage, healing and absorb effects and stacking effects are not stats and are not rated: the tooltip says so. Under an elixir, flask, food, potion or scroll with stats the lines are what its buff is worth, as a share of what your gear is worth."] =
+    "Schadens-, Heil- und Absorptionseffekte sowie Stapel-Effekte sind keine Werte und werden nicht bewertet: der Tooltip sagt es. Unter einem Elixier, Fläschchen, Essen, Trank oder einer Schriftrolle mit Werten steht, was ihr Bonus wert ist, als Anteil des Wertes Eurer Ausrüstung.",
+  ["%d hr"] =
+    "%d Std.",
+  ["%d min"] =
+    "%d Min.",
+  ["%d sec"] =
+    "%d Sek.",
+  ["Use: %s for %s every %s, counted at %d%%"] =
+    "Benutzen: %s für %s alle %s, gezählt mit %d%%",
+  ["Proc: %s for %s, counted at about %d%%"] =
+    "Proc: %s für %s, gezählt mit etwa %d%%",
+  ["Proc: %s for %s, counted at %d%%"] =
+    "Proc: %s für %s, gezählt mit %d%%",
+  ["Effect counted: %s"] =
+    "Effekt gezählt: %s",
+  ["Set bonuses are counted: %d pieces worn"] =
+    "Set-Boni werden gezählt: %d Teile getragen",
+  ["Another effect of this item is not rated"] =
+    "Ein weiterer Effekt dieses Gegenstands wird nicht bewertet",
+  ["Another effect of this set is not rated"] =
+    "Ein weiterer Effekt dieses Sets wird nicht bewertet",
+  ["The buff is worth, against your gear (%s):"] =
+    "Der Bonus ist wert, im Vergleich zu Eurer Ausrüstung (%s):",
+  ["The buff is worth, against your gear:"] =
+    "Der Bonus ist wert, im Vergleich zu Eurer Ausrüstung:",
+  ["survival"] =
+    "Überleben",
+  ["threat"] =
+    "Bedrohung",
+
+  -- Specs to rate
+  ["SPECS TO RATE"] =
+    "ZU BEWERTENDE SPEZIALISIERUNGEN",
+  ["Specs to rate"] =
+    "Zu bewertende Spezialisierungen",
+  ["All specs of the class"] =
+    "Alle Spezialisierungen der Klasse",
+  ["Automatic: my talent spec"] =
+    "Automatisch: meine Talentspezialisierung",
+  ["Manual: pick the roles"] =
+    "Manuell: Rollen wählen",
+  ["Which specs the tooltip rates, the arrows on bags, loot and quest rewards count, and the spec icon names. Automatic follows the talent tree you have your points in (all specs if the game does not say). Manual uses the boxes below."] =
+    "Welche Spezialisierungen der Tooltip bewertet, welche die Pfeile an Taschen, Beute und Questbelohnungen zählen und welche das Spezialisierungssymbol nennt. Automatisch folgt dem Talentbaum, in dem Ihr Eure Punkte habt (alle Spezialisierungen, wenn das Spiel es nicht sagt). Manuell nutzt die Kästchen darunter.",
+  ["Damage specs"] =
+    "Schadens-Spezialisierungen",
+  ["Rate the damage specs of your class. Needs Manual."] =
+    "Die Schadens-Spezialisierungen Eurer Klasse bewerten. Benötigt Manuell.",
+  ["Tank specs"] =
+    "Tank-Spezialisierungen",
+  ["Rate the tank specs, and show the tank caps lines (uncrittable, avoidance). Needs Manual."] =
+    "Die Tank-Spezialisierungen bewerten und die Tank-Grenzwert-Zeilen zeigen (nicht kritisch treffbar, Vermeidung). Benötigt Manuell.",
+  ["Healer specs"] =
+    "Heiler-Spezialisierungen",
+  ["Rate the healer specs (an approximate score). Needs Manual."] =
+    "Die Heiler-Spezialisierungen bewerten (ein ungefährer Wert). Benötigt Manuell.",
+  ["Or pick single specs of your class (a spec you turn off here is not rated, whatever its role says). Needs Manual."] =
+    "Oder einzelne Spezialisierungen Eurer Klasse wählen (eine hier abgeschaltete Spezialisierung wird nicht bewertet, egal welche Rolle sie hat). Benötigt Manuell.",
+  ["Rate this spec. Off: its lines, arrows and quest marks are left out. Needs Manual."] =
+    "Diese Spezialisierung bewerten. Aus: ihre Zeilen, Pfeile und Questmarkierungen entfallen. Benötigt Manuell.",
+  ["Specs to rate (Tooltip tab) narrows this to the specs you play: Automatic follows your talent tree, Manual lets you tick damage, tank and healer, or single specs. It also decides the arrows and the spec icon."] =
+    "Zu bewertende Spezialisierungen (Reiter Tooltip) beschränkt dies auf die Spezialisierungen, die Ihr spielt: Automatisch folgt Eurem Talentbaum, Manuell lässt Euch Schaden, Tank und Heiler oder einzelne Spezialisierungen ankreuzen. Es bestimmt auch die Pfeile und das Spezialisierungssymbol.",
 
   -- the Bag arrows tab
   ["On the game's own bags and the Baganator bag grid: green up when at least one spec's score is outright better and none of it worse."] =

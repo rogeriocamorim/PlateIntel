@@ -47,6 +47,8 @@ local function unitFrameBase(unit)
     local path = Frames.Get(key)
     if path ~= "" then
       local bar = Frames.Resolve(path)
+      -- a path saved from a pick that landed on an overlay bar of the same frame (TempMaxHealthLoss, absorb) means its health bar
+      if bar and Frames.HealthBarOf then bar = Frames.HealthBarOf(bar) end
       if bar then
         -- A replacement frame that is hidden (no target, switched off) hides the marks with it.
         if not Frames.Shown(bar) then return end
@@ -165,6 +167,10 @@ end
 
 function Plate.ReadBarInset(bar)
   local ok, top, bottom = pcall(function()
+    -- The settings previews' mock bars (Core/Preview.lua) say so themselves: their parent is the whole mock frame, not a
+    -- container with a mask of the bar's width, so the measurement below finds nothing.
+    local declared = bar.uptBarInset
+    if type(declared) == "table" then return declared[1], declared[2] end
     local container = bar:GetParent()
     if type(container) ~= "table" or container.HealthBarMask == nil then return 0, 0 end
     local values = { bar:GetTop(), bar:GetBottom(), bar:GetLeft(), bar:GetRight(),

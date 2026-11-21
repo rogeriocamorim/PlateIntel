@@ -206,7 +206,7 @@ BIT.RegisterCommand("rangecheck", function() M.Report() end)
 ---------------------------------------------------------------------------------------------
 
 local icon, driver
-local refreshEuiDimming
+local refreshEuiDimming, syncRange
 
 -- The target's nameplate, if there is one the addon may use.
 local function targetPlate()
@@ -296,12 +296,14 @@ local function start()
     since = 0
     update()
     refreshEuiDimming()
+    syncRange(false)
   end)
   driver:RegisterEvent("PLAYER_TARGET_CHANGED")
   driver:RegisterEvent("NAME_PLATE_UNIT_ADDED")
   driver:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
   driver:SetScript("OnEvent", function(_, event, unit)
     refreshEuiDimming()
+    syncRange(true)
     -- the plate the icon sits on is being handed to another unit: never leave the icon on it. Other
     -- plates come and go without concern.
     if event == "NAME_PLATE_UNIT_REMOVED" and icon:GetParent() ~= UIParent
@@ -470,6 +472,70 @@ local function startDimming()
     dimIcon(button)
   end)
 end
+
+-- The client sends ACTION_RANGE_CHECK_UPDATE only when an action's answer changes, and a button keeps whatever the last
+-- event said: after the target died, a new one was clicked, or the button was given another action (a bar page, a drag)
+-- it could stay grey for a target that is in range. So the answer is asked again, for the buttons the events reached:
+-- on every target change at once, and otherwise twice a second. No target or a dead one is "not out of range"; an answer that cannot be said
+-- (nil or secret) leaves the state as it was; only a plain false is out, a plain true is in.
+local SYNC_INTERVAL = 0.5
+local syncedAt = 0
+syncRange = function(force)
+  if not running or not settings.dimIcons or next(seen) == nil then return end
+  local now = GetTime()
+  if not force and now - syncedAt < SYNC_INTERVAL then return end
+  syncedAt = now
+  local query = C_ActionBar and C_ActionBar.IsActionInRange or IsActionInRange
+  if type(query) ~= "function" then return end
+  local hasTarget = ask(UnitExists, "target") == true and ask(UnitIsDeadOrGhost, "target") ~= true
+  for button in pairs(seen) do
+    local action = button.action
+    if type(action) == "number" then -- hidden ones too: a nameplate-style bar addon may hide the game's own buttons
+      local out
+      if not hasTarget then
+        out = false
+      else
+        local ok, answer = pcall(query, action)
+        -- a secret answer, an error or nil (the client cannot say, which it may do for an addon's call) says nothing: the
+        -- last event stays. Only a plain yes or no changes the state.
+        if ok and not isSecret(answer) and answer ~= nil then out = (answer == false or answer == 0) end
+      end
+      if out ~= nil and (outOfRange[button] == true) ~= out then
+        outOfRange[button] = out or nil
+        dimIcon(button)
+      end
+    end
+  end
+end
+
+-- /upt rangedim: what the dimming knows about each action button the range events reached, to compare with what is
+-- on screen (a button that is grey although its target is in range shows `event-out=true` or `desaturated=true` here).
+BIT.RegisterCommand("rangedim", function()
+  local say = BIT.Say
+  local query = C_ActionBar and C_ActionBar.IsActionInRange or IsActionInRange
+  local count, shown = 0, 0
+  for button in pairs(seen) do
+    count = count + 1
+    local icon = button.icon
+    local desaturated = type(icon) == "table" and ask(icon.IsDesaturated, icon)
+    local answer = "-"
+    if type(query) == "function" and type(button.action) == "number" then
+      local ok, value = pcall(query, button.action)
+      answer = (not ok and "error") or (isSecret(value) and "secret") or tostring(value)
+    end
+    local dot = button.RangeIndicator
+    local dotShown = type(dot) == "table" and ask(dot.IsShown, dot)
+    local interesting = outOfRange[button] or dimmed[button] or desaturated == true or answer == "false"
+    if interesting and shown < 24 then
+      shown = shown + 1
+      say(string.format("%s action=%s event-out=%s dimmed=%s desaturated=%s IsActionInRange=%s visible=%s dot=%s",
+        tostring(ask(button.GetName, button)), tostring(button.action), tostring(outOfRange[button] == true),
+        tostring(dimmed[button] == true), tostring(desaturated), answer, tostring(ask(button.IsVisible, button)), tostring(dotShown)))
+    end
+  end
+  say(string.format("rangedim: %d button(s) reached by range events, %d listed (event-out, dimmed, grey or out of range), target %s, dimIcons %s",
+    count, shown, tostring(ask(UnitExists, "target")), tostring(settings and settings.dimIcons)))
+end)
 
 -- After the setting changes: dim or restore every button now.
 function M.RefreshDimming()
@@ -847,23 +913,40 @@ local function buildLivePreview(pane)
 
   -- Try it: the preview's own state, not a setting.
   local tryIt = header(BIT.L("TRY IT"), window.previewState, 12)
-  local toggle = checkboxRow(pane, "Simulate: out of range",
+  local toggle = checkboxRow(pane, "Try: out of range",
     function() return preview.out end,
     function(v) preview.out = v; changed() end,
     { layout = PREVIEW_LAYOUT,
       tooltip = "The preview only: the red X while it is checked, the green checkmark while it is not." })
   toggle:SetPoint("TOPLEFT", tryIt, "BOTTOMLEFT", -6, -4)
-  local noPlate = checkboxRow(pane, "Simulate: no nameplate",
+  local noPlate = checkboxRow(pane, "Try: no nameplate",
     function() return preview.noPlate end,
     function(v) preview.noPlate = v; changed() end,
     { layout = PREVIEW_LAYOUT,
       tooltip = "Preview the target without a visible nameplate." })
   noPlate:SetPoint("TOPLEFT", toggle, "BOTTOMLEFT", 0, 0)
 
+  -- SIMULATE: the target steps in and out of range, then loses its nameplate.
+  local saved
+  local simulate = BIT.Looks.Simulate(pane, noPlate, {
+    x = 6, y = -6, length = 7,
+    text = "The target steps in and out of range, then loses its nameplate.",
+    start = function() saved = { out = preview.out, noPlate = preview.noPlate } end,
+    frame = function(t)
+      preview.noPlate = t >= 5
+      preview.out = t < 5 and math.floor(t / 1.25) % 2 == 1 or false
+      changed()
+    end,
+    finish = function()
+      if saved then preview.out, preview.noPlate = saved.out, saved.noPlate end
+      changed()
+    end,
+  })
+
   -- The action bar button the module dims.
   local barCard = CreateFrame("Frame", nil, pane, "BackdropTemplate")
   barCard:SetSize(CARD_WIDTH, 56)
-  barCard:SetPoint("TOPLEFT", noPlate, "BOTTOMLEFT", 6, -10)
+  barCard:SetPoint("TOPLEFT", simulate, "BOTTOMLEFT", 0, -8)
   setBackdrop(barCard, 0.07)
   local button = CreateFrame("Frame", nil, barCard, "BackdropTemplate")
   button:SetSize(36, 36)
@@ -905,7 +988,7 @@ local function buildTabs()
       .. "the target frame instead." })
   iconTab:gap()
   local shown = function(s) return s.showIn or s.showOut end
-  iconTab:slider("size", "Size", 12, 64, 2,
+  iconTab:slider("size", "Mark size", 12, 64, 2,
     { enabledIf = shown, tooltip = "The mark's size in pixels." })
   iconTab:slider("offset", "Height above the bar", -20, 80, 1,
     { enabledIf = shown, tooltip = "Pixels above the nameplate's health bar: over the row of "

@@ -25,6 +25,7 @@ local DEFAULTS = {
   hp = true,              -- Execute, Hammer of Wrath
   heal = true,            -- Divine Grace
   reactive = true,        -- Overpower, Revenge, Mongoose Bite, Counterattack, Victory Rush
+  dispel = true,          -- Dispel Magic, Cure Disease, Cleanse, Remove Curse...: the target has something to remove
   kill = true,            -- any direct-damage spell whose damage would finish the target (needs CastPrediction)
   killBasis = "min",      -- "min": the low end of the damage range (certain) | "avg": its middle
   killSkipTrivial = true, -- no glow while the target is at full health
@@ -39,6 +40,7 @@ local DEFAULTS = {
   hpColor = "native",
   healColor = "green",
   reactiveColor = "yellow",
+  dispelColor = "cyan",
   killColor = "amber",
   size = 140,             -- glow size, % of the button (Blizzard's proc glow is 140)
   opacity = 100,
@@ -284,17 +286,23 @@ end
 -- ClassicConsoleGamepadUI hides Blizzard's bars and draws its own slots (children of ClassicConsoleGamepadUIBar), each
 -- mirroring one native button in its `source` field. A glow on the native button would be invisible, so the slot
 -- hosts the glow as well.
+local mirrorKids = nil -- the frames under ClassicConsoleGamepadUIBar, listed once per collect
 local function mirrorSlots()
   local list = {}
   local root = _G.ClassicConsoleGamepadUIBar
-  if type(root) ~= "table" or type(root.GetChildren) ~= "function" then return list end
-  local ok, children = pcall(function() return { root:GetChildren() } end)
-  if not ok or type(children) ~= "table" then return list end
-  for _, child in ipairs(children) do
-    if type(child) == "table" and type(child.GetObjectType) == "function" then
-      local okSource, source = pcall(function() return child.source end)
-      if okSource and type(source) == "table" and not isSecret(source) then list[#list + 1] = { slot = child, source = source } end
+  if type(root) ~= "table" or type(root.GetChildren) ~= "function" then mirrorKids = nil return list end
+  if not mirrorKids then
+    local ok, children = pcall(function() return { root:GetChildren() } end)
+    mirrorKids = {}
+    if ok and type(children) == "table" then
+      for _, child in ipairs(children) do
+        if type(child) == "table" and type(child.GetObjectType) == "function" then mirrorKids[#mirrorKids + 1] = child end
+      end
     end
+  end
+  for _, child in ipairs(mirrorKids) do
+    local source = child.source
+    if type(source) == "table" and not isSecret(source) then list[#list + 1] = { slot = child, source = source } end
   end
   return list
 end
@@ -408,8 +416,9 @@ local function createGlow(button, kind)
   return f
 end
 
--- Size and tint, applied when the glow is shown and whenever a setting changed.
-local function styleGlow(f, button, groupId, place)
+-- Size and tint, applied when the glow is shown and whenever a setting changed. `place` (the lethal glow's own placing)
+-- is called as place(glow, width, height, detector, button).
+local function styleGlow(f, button, groupId, place, detector)
   local w, h = buttonSize(button)
   local scale = clampNumber(cfg().size, 100, 250, 140) / 100
   local rgb = groupId and colorOf(groupId)
@@ -419,7 +428,7 @@ local function styleGlow(f, button, groupId, place)
   local gw, gh = w * scale, h * scale
   if f.glowKind ~= "blizzard" then gw, gh = gw * 1.35, gh * 1.35 end
   if place then
-    place(f, gw, gh) -- the lethal glow hangs on its detector instead of on the button
+    place(f, gw, gh, detector, button) -- the lethal glow hangs on its detector instead of on the button
   else
     f:ClearAllPoints()
     f:SetPoint("CENTER", button, "CENTER", 0, 0)
@@ -526,22 +535,53 @@ local function usableNow(spellID)
   return nil
 end
 
+-- One update pass asks the client about the target, about combat and about the target's health once, however many
+-- buttons carry a spell (ClassicConsoleGamepadUI's bars and the mirrored native bars make it a dozen or more).
+local pass = nil
+local function passState()
+  if not pass then pass = { alphaHas = {}, alphaVal = {} } end
+  return pass
+end
+
+local function targetInfo()
+  local t = passState()
+  if t.exists == nil then
+    t.exists = ask(UnitExists, "target") == true
+    if t.exists then
+      t.dead = ask(UnitIsDead, "target") == true
+      t.canAttack = ask(UnitCanAttack, "player", "target")
+      t.canAssist = ask(UnitCanAssist, "player", "target")
+      t.isSelf = ask(UnitIsUnit, "target", "player")
+    end
+  end
+  return t
+end
+
+local function inCombat()
+  local t = passState()
+  if not t.combatRead then
+    t.combatRead = true
+    t.combat = ask(UnitAffectingCombat, "player")
+  end
+  return t.combat
+end
+
 -- Is "target" a unit this rule is about? Unknown answers (a hidden value) do not rule a target out.
 local function targetFits(rule)
-  if ask(UnitExists, "target") ~= true then return false end
-  if ask(UnitIsDead, "target") == true then return false end
+  local t = targetInfo()
+  if not t.exists or t.dead then return false end
   if rule.target == "friend" then
-    if ask(UnitCanAssist, "player", "target") == false then return false end
-    if rule.notSelf and ask(UnitIsUnit, "target", "player") == true then return false end
+    if t.canAssist == false then return false end
+    if rule.notSelf and t.isSelf == true then return false end
   else
-    if ask(UnitCanAttack, "player", "target") == false then return false end
+    if t.canAttack == false then return false end
   end
   return true
 end
 
 -- The glow's opacity for the target's health: true and a number or a secret value, or false when nothing can
 -- be said. A secret value is never compared, not even with nil.
-local function healthAlpha(pct)
+local function healthAlphaUncached(pct)
   local level = opacity()
   local curve = curveFor(pct, level)
   if curve and type(UnitHealthPercent) == "function" then
@@ -557,6 +597,18 @@ local function healthAlpha(pct)
     end
   end
   return false
+end
+
+-- The answer for a share is kept for the rest of the update pass: Execute and its mirrors ask for the same one.
+local function healthAlpha(pct)
+  local t = passState()
+  local has = t.alphaHas[pct]
+  if has == nil then
+    local h, a = healthAlphaUncached(pct)
+    t.alphaHas[pct], t.alphaVal[pct] = h, a
+    return h, a
+  end
+  return has, t.alphaVal[pct]
 end
 ns.HealthAlpha = healthAlpha
 
@@ -583,6 +635,8 @@ local function buildLethalNames()
   end
 end
 
+local otherKeys = {} -- client name -> "~name", made once
+
 local function lethalKey(spellID)
   if ns.LethalSkipId[spellID] then return nil end
   local rec = ns.LethalById[spellID]
@@ -593,7 +647,9 @@ local function lethalKey(spellID)
   local hit = lethalNames[name]
   if hit == "skip" then return nil end
   if hit then return hit.name end
-  return "~" .. name
+  local key = otherKeys[name]
+  if not key then key = "~" .. name; otherKeys[name] = key end
+  return key
 end
 ns.LethalKey = lethalKey
 ns.SpellName = nameOf
@@ -619,11 +675,39 @@ local function predictDirect(spellID)
   return { min = min, max = max, value = value }
 end
 
+-- A spell's price is read from CastPrediction (it parses the spell's description) and kept: 20 seconds for a price,
+-- 8 for "no price" (a description the client had not loaded yet). The refresh is spread over scans: one scan
+-- spends about PRICE_SLICE_MS on it and asks for another at once when spells are left, so no single frame pays for
+-- the whole bar (reading every bar spell in one scan took about 9 ms).
+local PRICE_TTL, PRICE_TTL_NONE, PRICE_SLICE_MS = 20, 8, 1.5
+local priceCache = {} -- spell -> { pred (a table or false), at }
+function ns._pricesExpire() priceCache = {} end -- for a check that changes the prices by hand
+local clock = debugprofilestop or function() return (GetTime and GetTime() or 0) * 1000 end
+
+local function priceOf(spell, scan)
+  local c = priceCache[spell]
+  if c and scan.now - c.at < (c.pred and PRICE_TTL or PRICE_TTL_NONE) then return c.pred end
+  if scan.spent >= PRICE_SLICE_MS then
+    scan.more = true
+    return c and c.pred or false
+  end
+  local t0 = clock()
+  local pred = predictDirect(spell) or false
+  scan.spent = scan.spent + (clock() - t0)
+  if c then
+    c.pred, c.at = pred, scan.now
+  else
+    priceCache[spell] = { pred = pred, at = scan.now }
+  end
+  return pred
+end
+
 -- Whether the entry's rule opens a window, and with which opacity (a number or a secret value).
 local function windowFor(entry)
   local rule, c = entry.rule, cfg()
   if not rule or not ruleEnabled(rule) then return false end
-  if c.combatOnly and ask(UnitAffectingCombat, "player") == false then return false end
+  if c.combatOnly and inCombat() == false then return false end
+  if rule.dispel then return false end -- the game's aura container decides (updateDispel)
   if not rule.target then
     if usableNow(entry.spell) == true then return true, opacity() end
     return false
@@ -671,7 +755,7 @@ end
 local function killWanted(entry)
   local c = cfg()
   if c.kill == false or not entry.kill then return false end
-  if c.combatOnly and ask(UnitAffectingCombat, "player") == false then return false end
+  if c.combatOnly and inCombat() == false then return false end
   if not targetFits(ENEMY) then return false end
   if c.needResources and usableNow(entry.spell) == false then return false end
   return true
@@ -685,6 +769,19 @@ local function killDamage(entry)
 end
 
 local lastKill = setmetatable({}, { __mode = "k" })
+
+-- Where the lethal glow hangs: the detector's clip on the button, its bar at the clip's right end, the glow at the end of
+-- the fill. A function of its own: it used to be a closure made for every armed button on every update pass.
+local function placeKill(f, gw, gh, d, button)
+  d.clip:ClearAllPoints()
+  d.clip:SetPoint("CENTER", button, "CENTER", 0, 0)
+  d.clip:SetSize(gw, gh)
+  d.bar:ClearAllPoints()
+  d.bar:SetPoint("RIGHT", d.clip, "RIGHT", 0, 0)
+  d.bar:SetSize(DETECT_WIDTH, gh)
+  f:ClearAllPoints()
+  f:SetPoint("RIGHT", d.bar:GetStatusBarTexture(), "RIGHT", 0, 0)
+end
 
 local function updateKill(entry, testing)
   local button = entry.button
@@ -709,16 +806,7 @@ local function updateKill(entry, testing)
   for k, other in pairs(d.glows) do
     if k ~= kind and other.on then hideGlow(other) end
   end
-  styleGlow(g, button, "kill", function(f, gw, gh)
-    d.clip:ClearAllPoints()
-    d.clip:SetPoint("CENTER", button, "CENTER", 0, 0)
-    d.clip:SetSize(gw, gh)
-    d.bar:ClearAllPoints()
-    d.bar:SetPoint("RIGHT", d.clip, "RIGHT", 0, 0)
-    d.bar:SetSize(DETECT_WIDTH, gh)
-    f:ClearAllPoints()
-    f:SetPoint("RIGHT", d.bar:GetStatusBarTexture(), "RIGHT", 0, 0)
-  end)
+  styleGlow(g, button, "kill", placeKill, d)
   local alpha = opacity()
   if testing then
     d.bar:SetMinMaxValues(0, 1)
@@ -726,7 +814,12 @@ local function updateKill(entry, testing)
   else
     -- (0, health) with the damage as the value: the fill is the damage's share of the health, full when it kills.
     -- The health may be a secret value; it only goes into the bar.
-    local okSet = pcall(function() d.bar:SetMinMaxValues(0, UnitHealth("target", false)) end)
+    local t = passState()
+    if t.healthRead == nil then
+      t.healthRead = true
+      t.healthOk, t.health = pcall(UnitHealth, "target", false)
+    end
+    local okSet = t.healthOk and pcall(d.bar.SetMinMaxValues, d.bar, 0, t.health)
     if not okSet then
       if d.on then hideDetector(d) end
       return
@@ -751,6 +844,196 @@ end
 
 local lastState = setmetatable({}, { __mode = "k" })
 
+---------------------------------------------------------------------------------------------
+-- The dispel glow: the game's own aura container says when the target has something to remove
+---------------------------------------------------------------------------------------------
+
+-- Addon code cannot read a unit's auras in a fight (GetUnitAuras and the index reads throw on this client), so no
+-- Lua line here knows whether the target carries a Magic debuff. A Blizzard AuraContainer (Blizzard_AuraContainer,
+-- the same mechanism DoTInfo's native segments use) lists auras by dispel type itself and shows its button only
+-- while one matches; the glow is a child of that button, so it appears and disappears with the aura and nothing
+-- is ever read. One container per side (a friendly target's harmful effects, an enemy's beneficial ones) per
+-- button, shown only while the target is on that side, so Dispel Magic does not glow for an enemy's debuffs.
+local dispelBank = setmetatable({}, { __mode = "k" }) -- [host button] = { sig, rule, friend = side, enemy = side, failedAt }
+local DISPEL_RETRY = 5
+local DISPEL_FILTER = { friend = "HARMFUL", enemy = "HELPFUL" }
+local targetStamp = 0
+
+local function dispelSignature(button, rule)
+  local w, h = buttonSize(button)
+  local scale = clampNumber(cfg().size, 100, 250, 140)
+  local rgb = colorOf("dispel")
+  return string.format("%s/%d/%d/%d/%s/%d", rule.key, w, h, scale, rgb and table.concat(rgb, ",") or "native",
+    clampNumber(cfg().opacity, 10, 100, 100))
+end
+
+local function makeDispelSide(button, rule, side)
+  local types = rule.dispel[side]
+  if type(types) ~= "table" then return nil end
+  local set = {}
+  for _, name in ipairs(types) do set[name] = true end
+  local w, h = buttonSize(button)
+  local scale = clampNumber(cfg().size, 100, 250, 140) / 100 * 1.35
+  local r, g, b = 1, 0.82, 0.3
+  local rgb = colorOf("dispel")
+  if rgb then r, g, b = rgb[1], rgb[2], rgb[3] end
+  local alpha = opacity()
+  local okStrata, strata = pcall(button.GetFrameStrata, button)
+  if not okStrata or isSecret(strata) then strata = nil end
+  local level = readNumber(button, "GetFrameLevel")
+  local container, ready, failure
+  local ok, err = pcall(function()
+    if C_AddOns and ask(C_AddOns.IsAddOnLoaded, "Blizzard_AuraContainer") ~= true
+      and type(C_AddOns.LoadAddOn) == "function" then
+      pcall(C_AddOns.LoadAddOn, "Blizzard_AuraContainer")
+    end
+    container = CreateFrame("AuraContainer", nil, UIParent, "CustomAuraContainerTemplate")
+    container:SetSize(1, 1)
+    container:SetPoint("TOPLEFT", UIParent, "TOPLEFT")
+    container:SetUnit("target")
+    container:AddAuraSlot("dispel" .. rule.key .. side, DISPEL_FILTER[side], {
+      candidateFilters = { includeDispelTypes = set },
+      initializeFrame = function(aura)
+        -- The native factory swallows callback errors, so the outcome is kept here.
+        ready, failure = pcall(function()
+          -- Keep the AuraButton itself 1x1 off the action button and mouse-disabled: AuraButton is a <Button>
+          -- with OnEnter/OnClick handlers, so covering `button` with it would swallow clicks and tooltips.
+          aura:SetSize(1, 1)
+          aura:SetPoint("TOPLEFT", container, "TOPLEFT")
+          pcall(aura.EnableMouse, aura, false)
+          pcall(aura.SetMouseClickEnabled, aura, false)
+          pcall(aura.SetMouseMotionEnabled, aura, false)
+          local glow = CreateFrame("Frame", nil, aura, "DisableUntrustedLayoutScriptsTemplate")
+          if type(strata) == "string" then glow:SetFrameStrata(strata) end
+          if level then glow:SetFrameLevel(level + 6) end
+          glow:SetPoint("CENTER", button, "CENTER", 0, 0)
+          glow:SetSize(w * scale, h * scale)
+          glow:SetAlpha(alpha)
+          local tex = glow:CreateTexture(nil, "OVERLAY")
+          tex:SetAllPoints()
+          tex:SetTexture("Interface\\Buttons\\UI-ActionButton-Border")
+          tex:SetBlendMode("ADD")
+          tex:SetVertexColor(r, g, b)
+          -- the pulse is a nicety: if the restricted frame refuses an animation the border stays steady
+          pcall(function()
+            local pulse = tex:CreateAnimationGroup()
+            pulse:SetLooping("BOUNCE")
+            local a = pulse:CreateAnimation("Alpha")
+            a:SetFromAlpha(1)
+            a:SetToAlpha(0.35)
+            a:SetDuration(0.5)
+            pulse:Play()
+          end)
+        end)
+      end,
+    })
+    assert(ready, failure or "the aura frame was not initialized")
+    pcall(container.SetEnabled, container, false)
+    pcall(container.Hide, container)
+  end)
+  if not ok then
+    if container then pcall(container.SetEnabled, container, false); pcall(container.Hide, container) end
+    trace(string.format("DISPEL %s (%s) container failed: %s", rule.key, side,
+      type(err) == "string" and not isSecret(err) and err or "restricted"))
+    return nil, true
+  end
+  return { container = container, shown = false }
+end
+
+local function retireDispel(bank)
+  for _, name in ipairs({ "friend", "enemy" }) do
+    local s = bank[name]
+    if s and s.container then
+      pcall(s.container.SetEnabled, s.container, false)
+      pcall(s.container.Hide, s.container)
+    end
+    bank[name] = nil
+  end
+end
+
+local function showSide(bank, name, shown)
+  local side = bank[name]
+  if not side then return end
+  local c = side.container
+  if side.shown ~= shown then
+    local ok = pcall(c.SetEnabled, c, shown)
+    ok = pcall(shown and c.Show or c.Hide, c) and ok
+    if ok then
+      side.shown = shown
+      side.targetStamp = shown and targetStamp or nil
+      if shown then pcall(c.UpdateAllAuras, c) end
+      trace(string.format("DISPEL %s %s side %s", bank.rule.key, name, shown and "watching the target" or "off"))
+    end
+  elseif shown and side.targetStamp ~= targetStamp then
+    -- CustomAuraContainerTemplate only listens to UNIT_AURA, not PLAYER_TARGET_CHANGED, so switching between two
+    -- targets on the same side must ask the container to re-read the new target's auras.
+    side.targetStamp = targetStamp
+    pcall(c.UpdateAllAuras, c)
+  end
+end
+
+local function updateDispel(entry, testing)
+  local rule, button = entry.rule, entry.button
+  local bank = dispelBank[button]
+  local now = GetTime and GetTime() or 0
+  local lockdown = ask(InCombatLockdown) == true
+  local enabled = ruleEnabled(rule)
+  if enabled and not lockdown then
+    local sig = dispelSignature(button, rule)
+    if bank and (bank.sig ~= sig or bank.rule ~= rule) then
+      retireDispel(bank)
+      bank = nil
+    end
+    if not bank then
+      bank = { sig = sig, rule = rule }
+      dispelBank[button] = bank
+    end
+    -- a build that failed is tried again after DISPEL_RETRY seconds, not on every update
+    if not bank.built and (not bank.failedAt or now - bank.failedAt >= DISPEL_RETRY) then
+      local failed = false
+      for _, name in ipairs({ "friend", "enemy" }) do
+        local side, didFail = makeDispelSide(button, rule, name)
+        if didFail then failed = true end
+        bank[name] = side
+      end
+      if failed then
+        retireDispel(bank)
+        bank.failedAt = now
+      else
+        bank.built, bank.failedAt = true, nil
+        trace(string.format("DISPEL %s: aura container ready on %s", rule.key, entry.name))
+      end
+    end
+  end
+  if not bank then return end
+  local wantFriend, wantEnemy = false, false
+  if not testing and enabled and bank.rule == rule
+    and not (cfg().combatOnly and inCombat() == false)
+    and not (cfg().needResources and usableNow(entry.spell) == false)
+    and ask(button.IsVisible, button) ~= false then
+    local t = targetInfo()
+    if t.exists and not t.dead then
+      wantFriend = t.canAssist == true
+      wantEnemy = t.canAttack == true
+    end
+  end
+  showSide(bank, "friend", wantFriend)
+  showSide(bank, "enemy", wantEnemy)
+end
+
+-- A button that no longer carries a dispel spell turns its containers off at once (even in combat, since they
+-- live on UIParent) and drops them once out of combat.
+local function releaseDispel(button)
+  local bank = dispelBank[button]
+  if not bank then return end
+  showSide(bank, "friend", false)
+  showSide(bank, "enemy", false)
+  if ask(InCombatLockdown) ~= true then
+    retireDispel(bank)
+    dispelBank[button] = nil
+  end
+end
+
 local function updateEntry(entry, testing)
   local on, alpha
   if testing then on, alpha = entry.rule and true or false, opacity() else on, alpha = windowFor(entry) end
@@ -764,7 +1047,8 @@ local function updateEntry(entry, testing)
   elseif f and f.on then
     hideGlow(f)
   end
-  if entry.rule and lastState[button] ~= (on and true or false) then
+  if entry.rule and entry.rule.dispel then updateDispel(entry, testing) end
+  if entry.rule and not entry.rule.dispel and lastState[button] ~= (on and true or false) then
     lastState[button] = on and true or false
     if not testing then
       trace(string.format("%s %s on %s", on and "GLOW" or "off", entry.label, entry.name))
@@ -774,48 +1058,68 @@ local function updateEntry(entry, testing)
 end
 
 local function updateAll()
+  pass = nil
   local testing = testUntil > (GetTime and GetTime() or 0)
   for _, entry in ipairs(active) do updateEntry(entry, testing) end
 end
 ns.Update = updateAll
 
+-- The bars are listed again when an event says they changed and otherwise every COLLECT_EVERY seconds (the list of
+-- LibActionButton libraries and the children of ClassicConsoleGamepadUI's bar do not change by themselves); what
+-- each known button holds is read on every scan.
+local collectDue, lastCollect = true, -100
+local COLLECT_EVERY = 10
+local dirtyScan = false -- also set by the events below
+
 local function rescan()
-  collectButtons()
+  local now = GetTime and GetTime() or 0
+  if collectDue or now - lastCollect >= COLLECT_EVERY then
+    collectDue, lastCollect = false, now
+    collectButtons()
+    mirrorKids = nil
+  end
   local list, by = {}, {}
-  local priced = {} -- spell -> its prediction or false, once per scan
+  local scan = { now = now, spent = 0, more = false }
   local wantKill = cfg().kill ~= false
-  local function consider(host, spell, name)
+  local function consider(host, spell, source, isSlot)
     if not spell then return end
     local rule = ruleFor(spell)
     local pred
     if wantKill then
       local key = lethalKey(spell)
       if key then
-        pred = priced[spell]
-        if pred == nil then pred = predictDirect(spell) or false; priced[spell] = pred end
+        pred = priceOf(spell, scan)
         if pred and key:sub(1, 1) == "~" and type(settings.lethalOther) == "table" then settings.lethalOther[key] = true end
         if pred and not lethalAllowed(key) then pred = false end
       end
     end
     if rule or pred then
+      local name
+      if isSlot then
+        name = "ClassicConsoleGamepadUI slot of " .. tostring(source:GetName() or "?")
+      else
+        name = tostring(host:GetName() or "button")
+      end
       local entry = { button = host, rule = rule, kill = pred or nil, spell = spell, name = name,
         group = rule and rule.group or "kill", label = rule and rule.key or "kill" }
       list[#list + 1] = entry
       by[host] = entry
     end
   end
-  for _, b in ipairs(buttons) do consider(b, buttonSpell(b), tostring(b:GetName() or "button")) end
+  for _, b in ipairs(buttons) do consider(b, buttonSpell(b), b, false) end
   for _, m in ipairs(mirrorSlots()) do
-    if not by[m.slot] then
-      consider(m.slot, buttonSpell(m.source), "ClassicConsoleGamepadUI slot of " .. tostring(m.source:GetName() or "?"))
-    end
+    if not by[m.slot] then consider(m.slot, buttonSpell(m.source), m.source, true) end
   end
+  if scan.more then dirtyScan = true end -- spells left to price: the next frame takes the next slice
   -- a button that no longer carries one of the spells loses its glow
   for b, set in pairs(glows) do
     if not by[b] then
       for _, f in pairs(set) do if f.on then hideGlow(f) end end
       lastState[b] = nil
     end
+  end
+  for b in pairs(dispelBank) do
+    if not by[b] or not by[b].rule or not by[b].rule.dispel then releaseDispel(b) end
   end
   for b, d in pairs(detectors) do
     if not by[b] or not by[b].kill then
@@ -848,11 +1152,15 @@ ns.Rescan = rescan
 ---------------------------------------------------------------------------------------------
 
 local frame = CreateFrame("Frame")
-local dirtyScan, dirtyUpdate = false, false
+local dirtyUpdate = false
 local sinceUpdate, sinceScan = 0, 0
 local UPDATE_EVERY, SCAN_EVERY = 0.1, 2
+-- A pass that an event asked for (the target's health, a usable change, a shapeshift, ...) waits until this long after the last
+-- pass, capping event-driven passes at 20 a second (as ShieldsInfo's EVENT_GAP does); the glows still follow within a
+-- twentieth of a second, and at once when no pass ran in the last 50 ms.
+local EVENT_GAP = 0.05
 
-scheduleRescan = function() dirtyScan = true end
+scheduleRescan = function() dirtyScan, collectDue = true, true end
 
 local EVENTS = {
   "PLAYER_ENTERING_WORLD", "ACTIONBAR_SLOT_CHANGED", "ACTIONBAR_PAGE_CHANGED", "UPDATE_BONUS_ACTIONBAR",
@@ -873,12 +1181,13 @@ local function onUpdate(_, elapsed)
   sinceUpdate = sinceUpdate + elapsed
   sinceScan = sinceScan + elapsed
   if dirtyScan or sinceScan >= SCAN_EVERY then
-    dirtyScan, sinceScan = false, 0
+    -- a rescan ends with a pass of its own, which already shows what the events of this frame brought
+    dirtyScan, dirtyUpdate, sinceScan = false, false, 0
     rescan()
     sinceUpdate = 0
     return
   end
-  if dirtyUpdate or sinceUpdate >= UPDATE_EVERY then
+  if sinceUpdate >= UPDATE_EVERY or (dirtyUpdate and sinceUpdate >= EVENT_GAP) then
     dirtyUpdate, sinceUpdate = false, 0
     if #active > 0 then updateAll() end
   end
@@ -910,8 +1219,11 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     return
   end
   if not settings then return end
+  if event == "PLAYER_TARGET_CHANGED" or event == "PLAYER_ENTERING_WORLD" then
+    targetStamp = targetStamp + 1
+  end
   for _, e in ipairs(EVENTS) do
-    if event == e then dirtyScan = true return end
+    if event == e then dirtyScan, collectDue = true, true return end
   end
   dirtyUpdate = true
 end)
@@ -952,6 +1264,7 @@ end
 -- Every button that carries one of the spells glows for a few seconds, whatever the target and the game say.
 function ns.Test(seconds)
   if not settings then return 0 end
+  collectDue = true
   rescan()
   if #active == 0 then
     BIT.Say(BIT.L("TriggerGlow: none of its spells is on your action bars (Execute, Hammer of Wrath, Divine Grace, "
@@ -978,6 +1291,7 @@ function ns.Probe()
   local lines = {}
   local function add(s) lines[#lines + 1] = s end
   if not settings then add("TriggerGlow is switched off (/reload after switching it on).") return lines end
+  collectDue = true
   rescan()
   add(string.format("API: C_Spell.IsSpellUsable %s, UnitHealthPercent %s, C_CurveUtil %s, ActionButtonSpellAlertTemplate frame %s",
     (type(C_Spell) == "table" and type(C_Spell.IsSpellUsable) == "function") and "yes" or "no",
@@ -1024,6 +1338,16 @@ function ns.Probe()
         end
         line = line .. "; curve " .. table.concat(pts, " ")
       end
+    end
+    if e.rule and e.rule.dispel then
+      local bank = dispelBank[e.button]
+      local function side(name)
+        local one = bank and bank[name]
+        return one and (one.shown and "on" or "off") or "-"
+      end
+      line = line .. string.format(", aura containers %s (friend %s, enemy %s)",
+        bank and (bank.built and "built" or (bank.failedAt and "FAILED, retrying" or "not built")) or "not built",
+        side("friend"), side("enemy"))
     end
     local set = glows[e.button]
     local f = set and set[currentStyle()]

@@ -252,9 +252,12 @@ local function onItemDataArrived(id)
     wanted[id] = nil
     arrived[id] = (arrived[id] or 0) + 1
     waits[id] = nil -- the arrival starts a fresh bounded wait cycle
+    -- Only an id this module asked for (or already saw) repaints anything: other addons load
+    -- items while a tooltip is hovered, and every one of those events used to recompute every
+    -- bag button's corner widget (issue #75).
+    scheduleRefresh()
+    requestBaganatorRefresh()
   end
-  scheduleRefresh()
-  requestBaganatorRefresh()
 end
 
 -- Stat keys the model prices for this class (any spec, any measure, nonzero):
@@ -1370,7 +1373,13 @@ local function ensureEvents()
   for _, e in ipairs(REFRESH_EVENTS) do loader:RegisterEvent(e) end
   loader:RegisterEvent("ITEM_DATA_LOAD_RESULT") -- request arrivals (Baganator's loader too)
   loader:RegisterEvent("ADDON_LOADED")           -- a LATE Baganator load still registers
-  if type(GetSpecialization) == "function" then loader:RegisterEvent("PLAYER_SPECIALIZATION_CHANGED") end
+  -- A new spec or a talent change moves "Specs to rate: Automatic"; every name is tried alone,
+  -- a client that does not know one raises on it (see the note on ITEM_DATA_LOADED above).
+  if type(GetSpecialization) == "function" or type(C_SpecializationInfo) == "table" then
+    for _, e in ipairs({ "PLAYER_SPECIALIZATION_CHANGED", "ACTIVE_TALENT_GROUP_CHANGED", "PLAYER_TALENT_UPDATE" }) do
+      pcall(loader.RegisterEvent, loader, e)
+    end
+  end
   loader:RegisterEvent("BAG_CLOSED")
   loader:RegisterEvent("PLAYER_REGEN_ENABLED")
 end
@@ -1465,8 +1474,12 @@ loader:SetScript("OnEvent", function(self, event, arg1)
   end
   if not active then return end
   if event == "ITEM_DATA_LOAD_RESULT" or event == "GET_ITEM_INFO_RECEIVED" then
-    bumpRevision() -- an unchanged link may now include stats or an enchant absent on the last pass
-    onItemDataArrived(arg1)
+    -- Ids this module never requested are ignored (a secret id is not used as a key at all).
+    if type(arg1) == "number" and not isSecret(arg1)
+        and (outstanding[arg1] or wanted[arg1] or arrived[arg1]) then
+      bumpRevision() -- an unchanged link may now include stats or an enchant absent on the last pass
+      onItemDataArrived(arg1)
+    end
     return
   end
   if event == "PLAYER_REGEN_ENABLED" then
@@ -1493,7 +1506,9 @@ loader:SetScript("OnEvent", function(self, event, arg1)
     scheduleRefresh()
     return
   end
-  if event == "PLAYER_EQUIPMENT_CHANGED" or event == "PLAYER_LEVEL_UP" then
+  if event == "PLAYER_EQUIPMENT_CHANGED" or event == "PLAYER_LEVEL_UP"
+      or event == "PLAYER_SPECIALIZATION_CHANGED" or event == "ACTIVE_TALENT_GROUP_CHANGED"
+      or event == "PLAYER_TALENT_UPDATE" then
     -- the verdict is against what is worn (and gated by the player's level): an unchanged
     -- (slot, link) pair can answer differently now, so the memo must not skip this pass
     bumpRevision()
