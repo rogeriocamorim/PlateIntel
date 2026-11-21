@@ -27,7 +27,7 @@ local function build(parent)
     end
 
     place(UI.Header(parent, "WINDOW"), 24)
-    check("Lock window and list", "locked", "Stops the window and the mob list from being dragged. /upt advisor lock|unlock")
+    check("Lock the mob list", "locked", "Locked: the \"Drag to move\" handle is hidden. Untick to show it and drag the list. /upt advisor lock|unlock")
     slider("Window and list scale", "scale", 0.6, 1.6, 0.1, nil, function(v) return string.format("%.1f", v) end)
 
     place(UI.Header(parent, "MOB LIST"), 24)

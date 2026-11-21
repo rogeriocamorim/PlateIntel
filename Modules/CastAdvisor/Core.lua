@@ -17,7 +17,7 @@ local REFRESH = 0.2
 
 local DEFAULTS = {
     showWindow = true,
-    locked = false,
+    locked = true,                -- unlock (/upt advisor unlock) to show the drag handle and move the list
     x = -330, y = 40,            -- window centre, from the screen centre
     scale = 1,
     showList = true,
